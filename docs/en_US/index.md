@@ -83,7 +83,18 @@ Jeedom plugin to monitor **Hoymiles microinverters** (HMS-xxx-WB/T) through the 
 - **Resilience** : after 3 burst failures, fallback to polling with exponential backoff; re-login only when the token expires; auto-supervision via cron15
 - **Security** : credentials never leave your server (the daemon reads them from the encrypted Jeedom config)
 
-## 6. FAQ / Troubleshooting
+## 6. Versions — Beta vs Stable
+
+The project follows a **beta → stable** workflow: new features land on the `beta` branch (tested in real conditions), then move to `stable` once validated.
+
+| Branch | Usage | Version |
+|---|---|---|
+| `stable` / `master` | Production — validated | 0.1.0 |
+| `beta` | Testing — new features | 0.1.4 |
+
+📜 Detailed changelog: [CHANGELOG.md](../../CHANGELOG.md) · [Full README](../../README.md)
+
+## 7. FAQ / Troubleshooting
 
 ### "Connection failed" on test
 - Check your S-Miles email + password
@@ -99,7 +110,7 @@ Jeedom plugin to monitor **Hoymiles microinverters** (HMS-xxx-WB/T) through the 
 ### Is this plugin affiliated with Hoymiles?
 No — independent community project. Hoymiles / S-Miles trademarks belong to their owners.
 
-## 7. Known limitations
+## 8. Known limitations
 
 - **Control** (power limit, shutdown) : not exposed in this version (read-only API). An official control API exists but is not integrated yet.
 - **Cloud history** : long statistics (15 days per inverter) require the official API key (wapi.hoymiles.com) — planned for a later version.

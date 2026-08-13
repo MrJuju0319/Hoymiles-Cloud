@@ -83,7 +83,18 @@ Plugin Jeedom de supervision des **micro-onduleurs Hoymiles** (HMS-xxx-WB/T) via
 - **Résilience** : après 3 échecs de burst, repli sur polling + backoff exponentiel ; re-login seulement si le token expire ; supervision automatique par cron15
 - **Sécurité** : les identifiants ne quittent jamais le serveur (le daemon les lit dans la config Jeedom chiffrée)
 
-## 6. FAQ / Dépannage
+## 6. Versions — Bêta vs Stable
+
+Le projet suit un workflow **bêta → stable** : les nouveautés arrivent sur la branche `beta` (tests en conditions réelles), puis passent sur `stable` après validation.
+
+| Branche | Usage | Version |
+|---|---|---|
+| `stable` / `master` | Production — validée | 0.1.0 |
+| `beta` | Tests — nouveautés | 0.1.4 |
+
+📜 Changelog détaillé : [CHANGELOG.md](../../CHANGELOG.md) · [README complet](../../README.md)
+
+## 7. FAQ / Dépannage
 
 ### « Échec de la connexion » au test
 - Vérifier email + mot de passe S-Miles
@@ -99,7 +110,7 @@ Plugin Jeedom de supervision des **micro-onduleurs Hoymiles** (HMS-xxx-WB/T) via
 ### Le plugin est-il affilié à Hoymiles ?
 Non — projet communautaire indépendant. Les marques Hoymiles / S-Miles appartiennent à leurs propriétaires.
 
-## 7. Limitations connues
+## 8. Limitations connues
 
 - **Contrôle** (limitation de puissance, arrêt) : non exposé dans cette version (l'API utilisée est en lecture). Une API officielle de contrôle existe chez Hoymiles mais n'est pas encore intégrée.
 - **Historique cloud** : les statistiques longues (15 jours par micro) nécessitent la clé API officielle (wapi.hoymiles.com) — prévu dans une version ultérieure.
