@@ -16,3 +16,7 @@ Première version publiée.
 ## 0.1.1 (2026-08-13)
 
 - **Fix critique** : chemins `require_once` relatifs corrigés (`core/ajax/hoymilescloud.ajax.php` et `plugin_info/install.php`) — l'activation/la page de configuration renvoyaient une erreur réseau (500) car `core.inc.php` n'était pas trouvé.
+
+## 0.1.2 (2026-08-13)
+
+- **Amélioration** : la synchronisation ne renomme plus les équipements ni les commandes déjà personnalisés — le nom cloud n'est appliqué qu'à la création.

@@ -220,14 +220,20 @@ class hoymilescloud extends eqLogic
     private static function getOrCreateEqLogic($logicalId, $name, $type)
     {
         $eq = self::byLogicalId($logicalId, self::PLUGIN_ID);
+        $isNew = false;
         if (!is_object($eq)) {
             $eq = new self();
             $eq->setEqType_name(self::PLUGIN_ID);
             $eq->setLogicalId($logicalId);
             $eq->setIsEnable(1);
             $eq->setIsVisible(1);
+            $isNew = true;
         }
-        $eq->setName($name);
+        // Le nom n'est appliqué qu'à la création : un équipement renommé par
+        // l'utilisateur n'est jamais re-renommé par la synchronisation.
+        if ($isNew) {
+            $eq->setName($name);
+        }
         $eq->setConfiguration('type', $type);
         $eq->setConfiguration('autorefresh', '');
         $eq->save();
@@ -237,13 +243,18 @@ class hoymilescloud extends eqLogic
     private static function createCommand($eqLogic, $logicalId, $name, $type, $subtype, $unite = '', $template = '')
     {
         $cmd = $eqLogic->getCmd(null, $logicalId);
+        $isNew = false;
         if (!is_object($cmd)) {
             $cmd = new hoymilescloudCmd();
             $cmd->setEqLogic_id($eqLogic->getId());
             $cmd->setLogicalId($logicalId);
             $cmd->setIsVisible(1);
+            $isNew = true;
         }
-        $cmd->setName($name);
+        // Nom uniquement à la création : préserve les noms personnalisés.
+        if ($isNew) {
+            $cmd->setName($name);
+        }
         $cmd->setType($type);
         $cmd->setSubType($subtype);
         $cmd->setUnite($unite);
