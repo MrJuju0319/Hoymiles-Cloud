@@ -155,6 +155,10 @@ graph LR
 
 Le démon interroge `warn_data` (`select_by_station` avec `show_warn=1`) + les **codes d'alarme** du protobuf `down_module_day_data` (champs int16 par bucket, enum AlarmReason du protocole DTU) et traduit en **3 statuts** : `Normal` / `Warning` (anomalie signalée mais micro répondant) / `Alerte` (hors ligne). Le message d'erreur est en français (« Surtension réseau (grid over voltage) », « Sur-température (over-temperature) »…).
 
+### Valeurs forcées à 0 quand un micro est hors ligne (v0.1.8)
+
+Un micro déconnecté laissait ses **dernières valeurs figées** dans Jeedom (ex. 344 W affichés alors qu'il est mort). Depuis v0.1.8 : après **5 minutes** sans `connect` cloud (`OFF_LINE_DELAY = 300` s, même source que le statut « Alerte »), toutes les **commandes électriques** du micro sont **forcées à 0** (comportement « pleine nuit ») — `uac`, `up1`/`up2`, `ip1`/`ip2`, `freq`, `pac`, `p1`-`p4`. La production station (`real_power`) passe à 0 **seulement si tous les micros** sont hors ligne ; `temp` est volontairement exclue (valeur thermique). Les valeurs réelles reviennent automatiquement au retour du micro (W immédiat, V/A ≤ 5 min). Une coupure de l'API S-Miles ne déclenche jamais de faux zéro.
+
 ### Les 3 boucles de collecte
 
 | Boucle | Fréquence | Endpoint | Données |

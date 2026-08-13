@@ -126,3 +126,22 @@ Nouveau : chaque micro-onduleur remonte son **état de santé** dans Jeedom, exp
 - Le push jeeApi (type=cmd) **lève l'événement Jeedom** → les scénarios se déclenchent automatiquement
 - Sentinelle `OK` (et non chaîne vide) : le core Jeedom ignore les valeurs vides (`core/api/jeeApi.php` l.114 : `init('value') != ''`)
 - **Unités** : audit complet — toutes les commandes numériques ont leur unité (V, A, Hz, °C, W, Wh, %, g)
+
+---
+
+## 🧪 Version BÊTA — 0.1.8 (2026-08-13)
+
+> Branche `beta` — **en cours de test**, non validée pour la production.
+
+### 🌙 Valeurs forcées à 0 quand un micro est hors ligne (demandé par Julien)
+
+Un micro-onduleur déconnecté laissait ses **dernières valeurs figées** dans Jeedom (ex. 344 W affichés alors qu'il est mort) — les scénarios pouvaient réagir à une production fantôme. Désormais :
+
+- **Délai de grâce 5 min** (`OFF_LINE_DELAY = 300` s) : passé ce délai sans `connect` cloud, toutes les **commandes électriques** du micro sont **forcées à 0** (comportement « pleine nuit ») : `uac`, `up1`, `up2` (V), `ip1`, `ip2` (A), `freq` (Hz), `pac`, `p1`-`p4` (W)
+- **Station** : `real_power` forcée à 0 **seulement si tous les micros** sont hors ligne (on ne masque jamais la production des micros sains)
+- **`temp` volontairement exclue** : valeur thermique, pas électrique — en pleine nuit la température interne du micro ne tomberait pas à 0
+- **Source fiable** : suit le flag cloud `connect` (`warn_data`, `show_warn=1`) — la **même source que le statut « Alerte »** ; une coupure de l'API S-Miles (réseau local, rate-limit) ne déclenche **jamais** de faux zéro
+- **Retour en ligne** : les valeurs réelles reviennent automatiquement (puissances immédiatement via le burst, V/A au prochain cycle « données jour » ≤ 5 min)
+- **Zéro spam** : le push intelligent ne re-pousse 0 qu'aux changements réels ; logs de franchissement limités
+- **Fix nuit** : « Pas d'URI burst » quand la station ne produit plus (nuit) n'est **plus** traité comme une panne — log espacé (1×/10 min), nouvel essai toutes les 5 min, plus de faux « mode dégradé » ni de spam de logs
+- **Tests unitaires** : 6 scénarios (micro hors ligne / fraîchement coupé / station partielle / retour / None / temp) — tous verts avant déploiement
