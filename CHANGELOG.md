@@ -4,9 +4,9 @@ Le projet suit un workflow **bêta → stable** : les nouveautés arrivent sur l
 
 ---
 
-## 🧪 BÊTA — Grandes lignes (0.1.1 → 0.1.8)
+## ✅ Version STABLE — 0.1.8 (2026-08-13)
 
-> Ce que la branche `beta` apporte par rapport à la **stable 0.1.0** — résumé en une ligne par version (détails plus bas).
+> ✔️ **Validée par Julien** — toute la série 0.1.1 → 0.1.8 est passée sur la branche `stable` (0.1.0 → 0.1.8). Résumé en une ligne par version (détails plus bas).
 
 - **0.1.1 — Fiabilité** : fix de l'« erreur réseau » (chemins `require_once` corrigés)
 - **0.1.2 — Non destructif** : la synchronisation ne renomme plus vos équipements/commandes personnalisés
@@ -21,7 +21,7 @@ Le projet suit un workflow **bêta → stable** : les nouveautés arrivent sur l
 
 ## 🧪 Version BÊTA — 0.1.4 (2026-08-13)
 
-> Branche `beta` — **en cours de test**, non validée pour la production.
+> ✔️ Historique validé (13/08/2026) — passé sur la branche `stable`.
 
 ### 0.1.4 — Nouvelles commandes électriques (tensions, courants, températures)
 
@@ -87,7 +87,7 @@ Découverte majeure : le cloud expose **toutes** les données électriques via l
 
 ## 🧪 Version BÊTA — 0.1.5 (2026-08-13)
 
-> Branche `beta` — **en cours de test**, non validée pour la production.
+> ✔️ Historique validé (13/08/2026) — passé sur la branche `stable`.
 
 ### Optimisation du démon (threads + file d'attente)
 
@@ -113,7 +113,7 @@ Découverte majeure : le cloud expose **toutes** les données électriques via l
 
 ## 🧪 Version BÊTA — 0.1.6 (2026-08-13)
 
-> Branche `beta` — **en cours de test**, non validée pour la production.
+> ✔️ Historique validé (13/08/2026) — passé sur la branche `stable`.
 
 ### 🔒 Audit sécurité (4 points, demandé par Julien)
 
@@ -127,7 +127,7 @@ Découverte majeure : le cloud expose **toutes** les données électriques via l
 
 ## 🧪 Version BÊTA — 0.1.7 (2026-08-13)
 
-> Branche `beta` — **en cours de test**, non validée pour la production.
+> ✔️ Historique validé (13/08/2026) — passé sur la branche `stable`.
 
 ### ❤️ Santé des micro-onduleurs (Statut + Message d'erreur)
 
@@ -146,7 +146,7 @@ Nouveau : chaque micro-onduleur remonte son **état de santé** dans Jeedom, exp
 
 ## 🧪 Version BÊTA — 0.1.8 (2026-08-13)
 
-> Branche `beta` — **en cours de test**, non validée pour la production.
+> ✔️ Historique validé (13/08/2026) — passé sur la branche `stable`.
 
 ### 🌙 Valeurs forcées à 0 quand un micro est hors ligne (demandé par Julien)
 
