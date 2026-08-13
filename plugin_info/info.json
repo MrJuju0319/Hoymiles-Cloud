@@ -9,7 +9,7 @@
     "licence": "AGPL",
     "author": "Julien et IA",
     "require": "4.4",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "category": "energy",
     "hasDependency": true,
     "hasOwnDeamon": true,

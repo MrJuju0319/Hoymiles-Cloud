@@ -2,7 +2,7 @@
 /* This file is part of the Hoymiles Cloud plugin for Jeedom.
  * Called on plugin install/update — builds the Python venv for the daemon.
  */
-require_once dirname(__FILE__) . '/../../core/php/install_jeedom.php';
+require_once dirname(__FILE__) . '/../../../core/php/install_jeedom.php';
 
 try {
     $plugin_dir = realpath(dirname(__FILE__) . '/..');

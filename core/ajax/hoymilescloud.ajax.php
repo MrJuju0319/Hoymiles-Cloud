@@ -1,7 +1,7 @@
 <?php
 /* This file is part of the Hoymiles Cloud plugin for Jeedom. */
 try {
-    require_once dirname(__FILE__) . '/../../core/php/core.inc.php';
+    require_once dirname(__FILE__) . '/../../../../core/php/core.inc.php';
     include_file('core', 'authentification', 'php');
 
     if (!isConnect('admin')) {

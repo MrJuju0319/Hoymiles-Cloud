@@ -12,3 +12,7 @@ Première version publiée.
 - **Démon** : venv Python local, supervision cron15, backoff exponentiel, re-login automatique
 - **UI** : page desktop moderne (plugin.template.js), boutons dépendances/démon, test de connexion, synchro
 - **Multi-langue** : fr_FR, en_US
+
+## 0.1.1 (2026-08-13)
+
+- **Fix critique** : chemins `require_once` relatifs corrigés (`core/ajax/hoymilescloud.ajax.php` et `plugin_info/install.php`) — l'activation/la page de configuration renvoyaient une erreur réseau (500) car `core.inc.php` n'était pas trouvé.
