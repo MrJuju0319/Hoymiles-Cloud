@@ -24,7 +24,7 @@
         "docker",
         "smart"
     ],
-    "changelog": "https://github.com/VOTRE_USER_GITHUB/hoymilescloud/blob/master/CHANGELOG.md",
-    "documentation": "https://github.com/VOTRE_USER_GITHUB/hoymilescloud/blob/master/docs/fr_FR/index.md",
+    "changelog": "https://github.com/MrJuju0319/hoymilescloud/blob/master/CHANGELOG.md",
+    "documentation": "https://github.com/MrJuju0319/hoymilescloud/blob/master/docs/fr_FR/index.md",
     "forum": "https://community.jeedom.com/"
 }
