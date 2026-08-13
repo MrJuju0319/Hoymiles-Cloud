@@ -55,6 +55,7 @@ Plugin Jeedom de supervision des **micro-onduleurs Hoymiles** (HMS-xxx-WB/T) via
 | `self_rate` | Autoconsommation | % | Taux d'autoconsommation |
 | `co2` | CO₂ évité | g | Émissions évitées |
 | `online` | En ligne | binaire | 1 si la station est connectée au cloud |
+| `daemon` | Démon OK | binaire | Heartbeat du démon (mis à jour toutes les 60 s) — pour scénario d'alerte si plus de mise à jour |
 | `last_data_time` | Dernière donnée | date | Horodatage de la dernière remontée de données |
 
 ### Micro-onduleur (ex. « HMS-1000-2WB (1610A38B34D5) »)

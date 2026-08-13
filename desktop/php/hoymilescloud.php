@@ -28,6 +28,13 @@ $eqLogics = eqLogic::byType($plugin->getId());
 				<span>{{Aide}}</span>
 			</div>
 		</div>
+		<legend><i class="fas fa-cloud-sun"></i> {{État du cloud S-Miles}}
+			<a class="btn btn-sm btn-default" id="bt_refreshHoymilesStatus" title="{{Actualiser}}"><i class="fas fa-sync-alt"></i></a>
+			<small class="text-muted" id="hoymilesStatusAge"></small>
+		</legend>
+		<div id="hoymilesStatusPanel" class="alert alert-info" style="margin:5px 10px;">
+			<i class="fas fa-spinner fa-spin"></i> {{Chargement…}}
+		</div>
 		<legend><i class="fas fa-solar-panel"></i> {{Mes équipements Hoymiles}}</legend>
 		<?php
 		if (count($eqLogics) == 0) {

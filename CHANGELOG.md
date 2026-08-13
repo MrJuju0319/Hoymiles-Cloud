@@ -67,3 +67,28 @@ Découverte majeure : le cloud expose **toutes** les données électriques via l
 ---
 
 *Projet communautaire indépendant, non affilié à Hoymiles. Licence AGPL-3.0.*
+
+---
+
+## 🧪 Version BÊTA — 0.1.5 (2026-08-13)
+
+> Branche `beta` — **en cours de test**, non validée pour la production.
+
+### Optimisation du démon (threads + file d'attente)
+
+- **3 threads collecteurs indépendants** (burst ~2-3 s / slow 60 s / day 5 min) + **1 thread pusher** qui consomme une `queue.Queue` : un blocage réseau ne fige plus jamais le démon, chaque boucle garde son rythme.
+- **Timeouts stricts partout** : API ≤ 10 s (`HTTP_TIMEOUT`), day_data 15 s, push Jeedom 10 s.
+- **Zéro écriture disque en fonctionnement normal** (important carte SD Raspberry Pi) : cache des valeurs 100 % en mémoire, pid file 1× au démarrage, `status.json` écrit uniquement sur **changement d'état** (écriture atomique via `.tmp` + `rename`), relecture config plafonnée à 1×/5 s.
+
+### Fiabilité et authentification
+
+- **Auto-refresh token complet** : tout appel répondant `status=100` (token expiré) déclenche re-login + retry — y compris le **burst** (nouveau). Le login est **verrouillé par lock** (thread-safe, pas de double login → pas de cooldown).
+- **Commande `daemon` (Démon OK)** sur la station : heartbeat binaire poussé **en force** toutes les 60 s (contourne le push intelligent) → un scénario Jeedom peut alerter si la commande n'est plus mise à jour depuis X minutes.
+- **`status.json`** publié par le démon : état (ok/dégradé/arrêté), burst/slow/day OK, dernière donnée, erreur.
+
+### Interface et ergonomie
+
+- **Panneau « État du cloud S-Miles »** sur la page du plugin : badges démon/cloud, puissance, production jour, autoconsommation, dernière donnée, heartbeat — **rafraîchi en AJAX toutes les 15 s** (+ bouton Actualiser) sans recharger la page.
+- Nouvelle action ajax `getStatus` → `getDaemonStatus()`.
+- **Fix** : méthode renommée `getDaemonStatus` (le core Jeedom définit déjà `eqLogic::getStatus()` — une redéclaration statique causait un fatal silencieux au chargement de la classe).
+- **Fix** : chemin ajax corrigé (`plugins/hoymilescloud/core/ajax/...`) — l'URL relative résolvait vers 404.

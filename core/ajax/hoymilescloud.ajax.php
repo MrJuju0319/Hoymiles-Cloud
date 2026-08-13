@@ -20,6 +20,11 @@ try {
         ajax::success($result);
     }
 
+    if (init('action') == 'getStatus') {
+        $result = hoymilescloud::getDaemonStatus();
+        ajax::success($result);
+    }
+
     throw new Exception(__('Aucune méthode correspondante', __FILE__));
 } catch (Exception $e) {
     ajax::error(displayException($e), $e->getCode());

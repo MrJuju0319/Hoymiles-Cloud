@@ -78,8 +78,48 @@ class hoymilescloud extends eqLogic
             }
             shell_exec('rm -f ' . escapeshellarg($pid_file));
         }
-        // kill de secours
-        shell_exec('pkill -f hoymiles_daemon.py 2>/dev/null');
+        // kill de secours (pid file introuvable) — pattern ciblé, jamais de pkill large
+        shell_exec('pkill -f "resources/hoymiles_daemon.py" 2>/dev/null');
+    }
+
+    public static function getDaemonStatus()
+    {
+        // ⚠️ nom volontairement ≠ getStatus : eqLogic du core définit déjà getStatus() (non-statique)
+        // État du démon : pid + status.json (écrit par le démon uniquement sur changement d'état)
+        $daemon = self::deamon_info();
+        $tmp = jeedom::getTmpFolder(self::PLUGIN_ID);
+        $status = array('state' => 'stopped', 'ts' => 0, 'burst_ok' => false, 'slow_ok' => false,
+            'day_ok' => false, 'last_data' => null, 'error' => null, 'degraded_since' => null);
+        $status_file = $tmp . '/status.json';
+        if (file_exists($status_file)) {
+            $j = json_decode(@file_get_contents($status_file), true);
+            if (is_array($j)) {
+                $status = array_merge($status, $j);
+            }
+        }
+        // Valeurs live de la station (cache Jeedom)
+        $station = null;
+        foreach (eqLogic::byType(self::PLUGIN_ID) as $eq) {
+            if (strpos($eq->getLogicalId(), 'station-') === 0) {
+                $vals = array();
+                foreach ($eq->getCmd() as $cmd) {
+                    $lid = $cmd->getLogicalId();
+                    if (in_array($lid, array('real_power', 'today_eq', 'last_data_time', 'daemon', 'online', 'self_rate'))) {
+                        $vals[$lid] = $cmd->getCache('value', null);
+                        $vals[$lid . '_date'] = $cmd->getCache('valueDate', null);
+                    }
+                }
+                $station = array('id' => $eq->getId(), 'name' => $eq->getName(), 'values' => $vals);
+                break;
+            }
+        }
+        return array(
+            'daemon' => $daemon,
+            'cloud' => $status,
+            'station' => $station,
+            'eq_count' => count(eqLogic::byType(self::PLUGIN_ID)),
+            'now' => date('Y-m-d H:i:s'),
+        );
     }
 
     public static function deamon_changeAutoMode($mode)
@@ -280,6 +320,7 @@ class hoymilescloud extends eqLogic
         self::createCommand($eq, 'co2', 'CO2 évité', 'info', 'numeric', 'g');
         self::createCommand($eq, 'last_data_time', 'Dernière donnée', 'info', 'string');
         self::createCommand($eq, 'online', 'Connecté', 'info', 'binary', '', 'state');
+        self::createCommand($eq, 'daemon', 'Démon OK', 'info', 'binary', '', 'state');
     }
 
     private static function createMicroCommands($eq)

@@ -6,6 +6,7 @@ User-Agent sma/ad/2.10.0/159/0 obligatoire, auth sur euapi.hoymiles.com).
 """
 import base64
 import hashlib
+import threading
 import time
 
 import requests
@@ -21,10 +22,11 @@ PROFILES = {
 
 TOKEN_TTL = 7200  # validité observée ~2h
 URI_REFRESH_MS = 240000  # le token k de l'URI burst expire
+HTTP_TIMEOUT = 10  # timeout strict : un blocage réseau ne doit jamais figer le démon
 
 
 class HoymilesCloudApi:
-    def __init__(self, user, password, profile="auto", timeout=20):
+    def __init__(self, user, password, profile="auto", timeout=HTTP_TIMEOUT):
         self.user = user
         self.password = password
         self.timeout = timeout
@@ -34,6 +36,7 @@ class HoymilesCloudApi:
         self.profile_pref = profile
         self.session = requests.Session()
         self.session.headers["Content-Type"] = "application/json"
+        self._auth_lock = threading.Lock()
 
     # ---------- HTTP ----------
     def _post(self, url, payload, profile="home", token=None):
@@ -101,9 +104,12 @@ class HoymilesCloudApi:
         return False
 
     def ensure_token(self, force=False):
-        if force or not self.token or (time.time() - self.token_at) > TOKEN_TTL - 300:
-            if not self.login():
-                raise RuntimeError("Login S-Miles échoué")
+        # Verrouillé : plusieurs threads (burst/slow/day_data) peuvent demander
+        # un token simultanément — un double login déclencherait le cooldown.
+        with self._auth_lock:
+            if force or not self.token or (time.time() - self.token_at) > TOKEN_TTL - 300:
+                if not self.login():
+                    raise RuntimeError("Login S-Miles échoué")
 
     def _auth_post(self, path, payload):
         self.ensure_token()
@@ -134,17 +140,25 @@ class HoymilesCloudApi:
 
     def burst(self, uri, mode=0, mis=None):
         """POST sur l'URI burst. mode 0 = station, mode 3 = micros.
-        Nécessite le header Authorization (sinon 400)."""
+        Nécessite le header Authorization (sinon 400).
+        Token expiré (status 100) → re-login + 1 retry."""
         body = {"m": mode, "t": 1}
         if mis:
             body["mis"] = mis
         h = {"Content-Type": "application/json", "User-Agent": PROFILES["home"]["ua"],
              "Authorization": self.token}
-        r = self.session.post(uri, json=body, headers=h, timeout=self.timeout)
-        try:
-            return r.status_code, r.json()
-        except Exception:
-            return r.status_code, {"status": "x", "message": "non-JSON"}
+        for attempt in range(2):
+            r = self.session.post(uri, json=body, headers=h, timeout=self.timeout)
+            try:
+                resp = r.json()
+            except Exception:
+                return r.status_code, {"status": "x", "message": "non-JSON"}
+            if resp.get("status") == "100":
+                self.ensure_token(force=True)
+                h["Authorization"] = self.token
+                continue
+            return r.status_code, resp
+        return r.status_code, resp
 
     # ---------- Données jour (protobuf) : tension/courant/température ----------
     def get_day_data(self, sid, date):
@@ -156,7 +170,7 @@ class HoymilesCloudApi:
              "Authorization": self.token}
         url = API_BASE + "/pvm-data/api/0/module/data/down_module_day_data"
         for attempt in range(2):
-            r = self.session.post(url, json={"sid": sid, "date": date}, headers=h, timeout=30)
+            r = self.session.post(url, json={"sid": sid, "date": date}, headers=h, timeout=15)
             if r.status_code == 200 and r.content and r.content[:1] != b"{":
                 return r.content
             # token expiré → refresh + 1 retry

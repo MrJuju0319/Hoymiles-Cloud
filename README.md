@@ -104,6 +104,7 @@ graph LR
 | `self_rate` | Autoconsommation | % | burst + 60 s | Taux d'autoconsommation |
 | `co2` | CO₂ évité | g | 60 s | Émissions évitées |
 | `online` | En ligne | binaire | 60 s | 1 si la station répond |
+| `daemon` | Démon OK | binaire | 60 s (forcé) | **Heartbeat** du démon — mis à jour toutes les 60 s ; utilisez-le dans un scénario pour alerter si les données ne se rafraîchissent plus |
 | `last_data_time` | Dernière donnée | date | 60 s | Dernière remontée du cloud |
 
 ### Micro-onduleur (ex. « HMS-1000-2WB (…) »)
@@ -165,6 +166,10 @@ Une valeur n'est **poussée vers Jeedom** que si elle change de plus que le **se
 - Profil **S-Miles Home** (compte bricoleur/balcon) : **Argon2id v3** sur `euapi.hoymiles.com` avec l'User-Agent `sma/ad/2.10.0/159/0` (obligatoire)
 - Token valide ~2 h, renouvelé automatiquement par le démon **uniquement** sur expiration ou `status=100` (les re-logins inutiles déclencheraient le cooldown anti-brute-force)
 
+### Threads & non-blocage (v0.1.5)
+
+Le démon tourne en **4 threads** : 3 collecteurs indépendants (burst, slow, day data) + 1 pusher qui consomme une **file d'attente**. Un blocage réseau ne fige jamais le démon — chaque boucle garde son rythme. **Timeouts stricts partout** (≤ 10 s API, 15 s day data, 10 s push). **Zéro écriture disque en fonctionnement normal** (cache 100 % mémoire — idéal carte SD Raspberry Pi) : seul `status.json` est écrit, uniquement lors d'un changement d'état.
+
 ### Résilience
 
 - **3 échecs de burst** → repli automatique sur le polling seul (mode dégradé) + backoff exponentiel
@@ -185,6 +190,7 @@ Une valeur n'est **poussée vers Jeedom** que si elle change de plus que le **se
 | `pvm-data/api/0/module/data/down_module_day_data` | **Protobuf** tensions/courants/température |
 | `pvm/api/0/dev/micro/select_by_station` | Micros, alertes, versions |
 | `pvm/api/0/station/select_device_of_tree` | Arbre DTU → micros |
+| `pvm-data/api/0/module/data/down_module_day_data` | Protobuf tensions/courants/température (5 min) |
 
 > ⚠️ L'API est **non officielle** (rétro-ingénierie communautaire). Elle peut évoluer sans préavis ; le plugin est conçu pour tolérer les réponses vides et les changements de rythme.
 
