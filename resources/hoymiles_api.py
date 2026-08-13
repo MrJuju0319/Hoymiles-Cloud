@@ -27,6 +27,27 @@ TOKEN_TTL = 7200  # validité observée ~2h
 URI_REFRESH_MS = 240000  # le token k de l'URI burst expire
 HTTP_TIMEOUT = 10  # timeout strict : un blocage réseau ne doit jamais figer le démon
 
+# Codes d'alarme des micro-onduleurs Hoymiles (enum AlarmReason du protocole DTU,
+# identique côté OpenDTU) → libellés français lisibles pour Jeedom.
+ALARM_MESSAGES = {
+    1: "Autre anomalie",
+    2: "Surtension DC (panneau)",
+    3: "Sous-tension DC (panneau)",
+    4: "Surtension réseau (grid over voltage)",
+    5: "Sous-tension réseau (grid under voltage)",
+    6: "Sur-température (over-temperature)",
+    7: "Sur-courant DC (panneau)",
+    8: "Sous-courant DC (panneau)",
+    9: "Sur-courant AC (réseau)",
+    10: "Sous-courant AC (réseau)",
+    11: "Défaut d'isolement",
+    12: "Défaut de courant résiduel",
+    13: "Injection DC",
+    14: "Défaut relais",
+    15: "Fréquence réseau trop élevée",
+    16: "Fréquence réseau trop basse",
+}
+
 
 def jeedom_decrypt(value, jeedom_root):
     """Déchiffre une valeur `crypt:...` produite par utils::encrypt() du core Jeedom
@@ -159,6 +180,26 @@ class HoymilesCloudApi:
                                {"sid": sid, "page_size": 1000, "page_num": 1, "show_warn": 0})
         return resp.get("data", {}).get("list", [])
 
+    def get_micro_alarms(self, sid):
+        """État d'alarme de chaque micro — normalisé {sn: {"warn": bool, "connect": bool}}.
+
+        IMPORTANT : `show_warn=1` est OBLIGATOIRE — avec show_warn=0, warn_data
+        revient vide {} (connect=false à tort). Les codes détaillés arrivent par
+        le protobuf down_module_day_data (champs int16 par bucket → alarm_codes)."""
+        resp = self._auth_post("/pvm/api/0/dev/micro/select_by_station",
+                               {"sid": sid, "page_size": 1000, "page_num": 1, "show_warn": 1})
+        alarms = {}
+        for m in resp.get("data", {}).get("list", []):
+            sn = m.get("sn")
+            if not sn:
+                continue
+            wd = m.get("warn_data") or {}
+            alarms[sn] = {
+                "warn": bool(wd.get("warn")),
+                "connect": bool(wd.get("connect")),
+            }
+        return alarms
+
     def get_realtime(self, sid):
         """count_station_real_data — énergies + puissance instantanée."""
         resp = self._auth_post("/pvm-data/api/0/station/data/count_station_real_data", {"sid": sid})
@@ -287,6 +328,7 @@ def parse_day_data(blob):
             times = []
             ports = {}
             ac_series = {}
+            alarm_codes = []
             for mf, mw, mv in _pb_parse(micro.get("main") or b""):
                 if mf == 2 and mw == 2:
                     s = mv.decode(errors="ignore")
@@ -314,7 +356,16 @@ def parse_day_data(blob):
                 elif mf in (5, 6, 7) and mw == 2:
                     n = len(mv) // 4
                     ac_series[mf] = list(_s.unpack(f"<{n}f", mv))
-            entry = {"times": times, "ports": {}, "uac": None, "freq": None, "temp": None}
+                elif mf in (8, 9) and mw == 2:
+                    # Champs int16 par bucket : codes d'alarme (0 = pas d'alarme).
+                    # Décodés et agrégés en liste de codes non nuls (sans doublons,
+                    # ordre d'apparition) — consommés par le daemon pour le statut.
+                    n = len(mv) // 2
+                    for raw in _s.unpack(f"<{n}h", mv):
+                        if raw and raw not in alarm_codes:
+                            alarm_codes.append(raw)
+            entry = {"times": times, "ports": {}, "uac": None, "freq": None, "temp": None,
+                     "alarm_codes": alarm_codes}
             for port, pts in ports.items():
                 last = pts[-1] if pts else []
                 entry["ports"][port] = {

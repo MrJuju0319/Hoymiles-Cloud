@@ -33,7 +33,8 @@ import urllib.parse
 import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hoymiles_api import HoymilesCloudApi, URI_REFRESH_MS, parse_day_data, jeedom_decrypt
+from hoymiles_api import (HoymilesCloudApi, URI_REFRESH_MS, parse_day_data,
+                          jeedom_decrypt, ALARM_MESSAGES)
 
 PID_DIR = "/tmp/jeedom/hoymilescloud"
 STATUS_FILE = PID_DIR + "/status.json"
@@ -59,6 +60,7 @@ class HoymilesDaemon:
         self.burst_ok = False
         self.slow_failures = 0
         self.micro_missing = {}  # sn -> cycles consécutifs sans réponse
+        self.alarm_codes = {}    # sn -> [codes d'alarme] (du protobuf day_data)
         self.sid = None
         self.micros = []  # [sn, ...]
         self.micro_id_to_sn = {}  # id -> sn
@@ -259,6 +261,33 @@ class HoymilesDaemon:
                 log(f"Burst loop : {e}")
                 self.stop_event.wait(5)
 
+    # ---------- Santé micros ----------
+    def _alarm_status(self, warn, connect, codes):
+        """Traduit l'état brut S-Miles en 3 statuts lisibles pour Jeedom.
+
+        Logique de sévérité (simple et documentée) :
+        - connect=False          → "Alerte"  : perte de liaison = plus critique
+                                                (plus aucune production remontée)
+        - warn=True / codes non vide → "Warning" : le micro répond mais signale
+                                                une anomalie (sur-tension, sur-temp…)
+        - sinon                  → "Normal"
+
+        Le message d'erreur est dérivé du 1er code d'alarme (protobuf day_data,
+        enum AlarmReason) ; si seul le booléen cloud est disponible, message
+        générique. Retourne (statut, message)."""
+        if not connect:
+            return "Alerte", "Micro-onduleur hors ligne"
+        if warn or codes:
+            code = codes[0] if codes else None
+            if code is not None:
+                msg = ALARM_MESSAGES.get(code, f"Alarme (code {code})")
+            else:
+                msg = "Anomalie détectée"
+            return "Warning", msg
+        # Sentinelle "OK" (et non "" vide) : le core Jeedom refuse les valeurs vides
+        # (core/api/jeeApi.php l.114 : `init('value') != ''` → event jamais déclenché).
+        return "Normal", "OK"
+
     # ---------- Boucle lente (énergies + statut + heartbeat) ----------
     def slow_poll(self):
         """count_station_real_data — énergies + statut + heartbeat démon."""
@@ -288,16 +317,19 @@ class HoymilesDaemon:
             # peut alerter si elle n'est plus mise à jour depuis X minutes.
             self.push(st, HEARTBEAT_CMD, 1, force=True)
             self._set_status(slow_ok=True, last_data=d.get("last_data_time"), error=None)
-            # statut alerte des micros (warn_data.warn via select_by_station)
+            # ---------- Santé des micros : warn_data (cloud) + codes (protobuf) ----------
             try:
-                for m in self.api.get_micros(self.sid):
-                    sn = m.get("sn")
-                    if not sn:
-                        continue
-                    wd = m.get("warn_data") or {}
-                    self.push(f"micro-{sn}", "warn", 1 if wd.get("warn") else 0)
+                # warn_data {warn, connect} : état agrégé exposé par le cloud
+                for sn, al in self.api.get_micro_alarms(self.sid).items():
+                    status, msg = self._alarm_status(
+                        warn=al["warn"], connect=al["connect"],
+                        codes=self.alarm_codes.get(sn, []))
+                    eq = f"micro-{sn}"
+                    self.push(eq, "warn", 1 if al["warn"] else 0)
+                    self.push(eq, "status", status)
+                    self.push(eq, "alarm_msg", msg)
             except Exception as e:
-                log(f"warn micros échoué : {e}")
+                log(f"Santé micros échoué : {e}")
         except Exception as e:
             self.slow_failures += 1
             log(f"Slow poll échoué : {e}")
@@ -344,6 +376,9 @@ class HoymilesDaemon:
                         self.push(eq, f"up{port}", round(p["up"], 1), t)
                     if p.get("ip") is not None:
                         self.push(eq, f"ip{port}", round(p["ip"], 2), t)
+                # codes d'alarme du jour (champs int16) — consommés par slow_poll
+                # pour le statut "Warning"/"Alerte" et le message d'erreur.
+                self.alarm_codes[sn] = entry.get("alarm_codes") or []
             self._set_status(day_ok=True, error=None)
             log(f"Day data OK : {len(data.get('micros', {}))} micro(s) — uac/temp/up/ip mis à jour")
         except Exception as e:

@@ -118,6 +118,8 @@ graph LR
 | `uac` | Tension réseau | V | 5 min | Tension AC |
 | `freq` | Fréquence réseau | Hz | 5 min | Fréquence AC |
 | `temp` | Température micro | °C | 5 min | Température interne du boîtier |
+| `status` | **Statut** | texte | 60 s | **`Normal` / `Warning` / `Alerte`** — santé du micro (déclenche les scénarios) |
+| `alarm_msg` | **Message d'erreur** | texte | 60 s | Détail de l'alarme (« Surtension réseau », « Sur-température »…) — `OK` si Normal |
 | `warn` | Alerte | binaire | 60 s | 1 si le micro signale une anomalie |
 | `connect` | Connecté | binaire | burst | 1 si le micro répond au burst |
 | `soft_ver` | Firmware | texte | synchro | Version du firmware (info) |
@@ -148,6 +150,10 @@ graph LR
                                     │  └─────────────────────────────────┘   │
                                     └─────────────────────────────────────────┘
 ```
+
+### Santé des micros (v0.1.7)
+
+Le démon interroge `warn_data` (`select_by_station` avec `show_warn=1`) + les **codes d'alarme** du protobuf `down_module_day_data` (champs int16 par bucket, enum AlarmReason du protocole DTU) et traduit en **3 statuts** : `Normal` / `Warning` (anomalie signalée mais micro répondant) / `Alerte` (hors ligne). Le message d'erreur est en français (« Surtension réseau (grid over voltage) », « Sur-température (over-temperature) »…).
 
 ### Les 3 boucles de collecte
 

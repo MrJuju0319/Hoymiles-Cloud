@@ -106,3 +106,23 @@ Découverte majeure : le cloud expose **toutes** les données électriques via l
 - **Exécution de commandes** : la commande de lancement du démon (`deamon_start()`) passe désormais chaque élément par `escapeshellarg()` — aucune injection de commande possible. `deamon_stop()` utilisait déjà `escapeshellarg()`.
 - **AJAX** : audit du modèle — déjà blindé (session Jeedom → rôle admin → `ajax::init()` anti-CSRF → whitelist d'actions explicite → aucun SQL brut, tout passe par l'ORM). Documenté en tête de `hoymilescloud.ajax.php`.
 - **Dépendances** : `requirements.txt` épinglé (`requests>=2.32.3` — CVE réseau corrigées en 2.32.x ; `argon2-cffi>=23.1.0`). Venv à jour : requests 2.34.2, argon2-cffi 25.1.0.
+
+
+---
+
+## 🧪 Version BÊTA — 0.1.7 (2026-08-13)
+
+> Branche `beta` — **en cours de test**, non validée pour la production.
+
+### ❤️ Santé des micro-onduleurs (Statut + Message d'erreur)
+
+Nouveau : chaque micro-onduleur remonte son **état de santé** dans Jeedom, exploitable par les scénarios et l'IA native.
+
+- **2 nouvelles commandes info par micro** :
+  - `status` (Statut, string) : **`Normal` / `Warning` / `Alerte`**
+  - `alarm_msg` (Message d'erreur, string) : détail en français — ex. « Surtension réseau (grid over voltage) », « Sur-température (over-temperature) » ; `OK` si Normal
+- **Sources** : `warn_data` (`select_by_station` avec `show_warn=1` — obligatoire, sinon warn_data est vide) + **codes d'alarme du protobuf** `down_module_day_data` (champs int16 par bucket, enum AlarmReason du protocole DTU → `alarm_codes` décodés dans `parse_day_data`)
+- **Logique de sévérité** : micro hors ligne (`connect=false`) → **Alerte** « Micro-onduleur hors ligne » ; anomalie signalée (`warn=true` ou codes présents) → **Warning** + message du 1er code ; sinon → **Normal** / `OK`
+- Le push jeeApi (type=cmd) **lève l'événement Jeedom** → les scénarios se déclenchent automatiquement
+- Sentinelle `OK` (et non chaîne vide) : le core Jeedom ignore les valeurs vides (`core/api/jeeApi.php` l.114 : `init('value') != ''`)
+- **Unités** : audit complet — toutes les commandes numériques ont leur unité (V, A, Hz, °C, W, Wh, %, g)

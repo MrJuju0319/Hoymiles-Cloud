@@ -355,6 +355,11 @@ class hoymilescloud extends eqLogic
         self::createCommand($eq, 'warn', 'Alerte', 'info', 'binary');
         self::createCommand($eq, 'connect', 'Connecté', 'info', 'binary', '', 'state');
         self::createCommand($eq, 'soft_ver', 'Firmware', 'info', 'string');
+        // Santé du micro (v0.1.7) : 2 commandes info poussées par le démon —
+        // "Normal" / "Warning" / "Alerte" + message d'erreur lisible.
+        // Le push jeeApi (type=cmd) lève l'événement Jeedom → déclenche les scénarios.
+        self::createCommand($eq, 'status', 'Statut', 'info', 'string');
+        self::createCommand($eq, 'alarm_msg', 'Message d\'erreur', 'info', 'string');
     }
 }
 
