@@ -7,7 +7,7 @@
     },
     "utilization": "Configurer le plugin avec les identifiants du compte S-Miles (celui de l'app S-Miles Home ou S-Miles Cloud), puis cliquer sur Synchroniser pour créer les équipements (Station + micro-onduleurs). Le démon pousse ensuite les valeurs en temps réel.",
     "licence": "AGPL",
-    "author": "Julien / Hermes",
+    "author": "Julien et IA",
     "require": "4.4",
     "version": "0.1.0",
     "category": "energy",
