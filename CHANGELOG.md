@@ -4,6 +4,21 @@ Le projet suit un workflow **bêta → stable** : les nouveautés arrivent sur l
 
 ---
 
+## 🧪 BÊTA — Grandes lignes (0.1.1 → 0.1.8)
+
+> Ce que la branche `beta` apporte par rapport à la **stable 0.1.0** — résumé en une ligne par version (détails plus bas).
+
+- **0.1.1 — Fiabilité** : fix de l'« erreur réseau » (chemins `require_once` corrigés)
+- **0.1.2 — Non destructif** : la synchronisation ne renomme plus vos équipements/commandes personnalisés
+- **0.1.3 — Production annuelle** : commande `year_eq` + commande d'alerte `warn` par micro
+- **0.1.4 — Données électriques complètes** : tensions, courants, fréquence et température par micro (protobuf `down_module_day_data`) + documentation complète
+- **0.1.5 — Démon fiable** : 4 threads + file d'attente (plus aucun blocage réseau), zéro écriture disque en fonctionnement, heartbeat, panneau d'état live sur la page du plugin
+- **0.1.6 — Sécurité** : identifiants chiffrés (`crypt:` + perms 0600), commandes shell protégées (`escapeshellarg`), dépendances épinglées, audit AJAX
+- **0.1.7 — Santé des micros** : commandes `Statut` (Normal / Warning / Alerte) et `Message d'erreur` en français pour chaque micro — exploitable par les scénarios
+- **0.1.8 — Anti-valeurs fantômes** : micro hors ligne > 5 min → V/A/W/Hz forcés à 0 (comportement nuit) + fix du burst nocturne (plus de faux mode dégradé)
+
+---
+
 ## 🧪 Version BÊTA — 0.1.4 (2026-08-13)
 
 > Branche `beta` — **en cours de test**, non validée pour la production.
