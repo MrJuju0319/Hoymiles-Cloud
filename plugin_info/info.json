@@ -1,0 +1,30 @@
+{
+    "id": "hoymilescloud",
+    "name": "Hoymiles Cloud",
+    "description": {
+        "fr_FR": "Plugin de supervision des micro-onduleurs Hoymiles (HMS-xxx-WB/T) via le cloud S-Miles. Temps réel par burst (~2-3 s), énergies, statut par micro-onduleur. Sans matériel local (BLE/WiFi), fonctionne même si la gateway locale est éteinte.",
+        "en_US": "Hoymiles microinverters monitoring plugin via S-Miles Cloud. Realtime burst (~2-3s), energy counters, per-inverter status. No local hardware needed, works even when the local gateway is offline."
+    },
+    "utilization": "Configurer le plugin avec les identifiants du compte S-Miles (celui de l'app S-Miles Home ou S-Miles Cloud), puis cliquer sur Synchroniser pour créer les équipements (Station + micro-onduleurs). Le démon pousse ensuite les valeurs en temps réel.",
+    "licence": "AGPL",
+    "author": "Julien / Hermes",
+    "require": "4.4",
+    "version": "0.1.0",
+    "category": "energy",
+    "hasDependency": true,
+    "hasOwnDeamon": true,
+    "maxDependancyInstallTime": 0,
+    "language": [
+        "fr_FR",
+        "en_US"
+    ],
+    "compatibility": [
+        "rpi",
+        "diy",
+        "docker",
+        "smart"
+    ],
+    "changelog": "https://github.com/VOTRE_USER_GITHUB/hoymilescloud/blob/master/CHANGELOG.md",
+    "documentation": "https://github.com/VOTRE_USER_GITHUB/hoymilescloud/blob/master/docs/fr_FR/index.md",
+    "forum": "https://community.jeedom.com/"
+}

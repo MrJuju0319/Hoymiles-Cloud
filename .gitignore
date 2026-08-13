@@ -1,0 +1,21 @@
+# .gitignore — Hoymiles Cloud
+
+# Environnement local / secrets (JAMAIS sur GitHub)
+.env
+.env.*
+
+# Python
+__pycache__/
+*.py[cod]
+resources/venv/
+*.egg-info/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Déploiement Jeedom (runtime, recréés par install.sh)
+/tmp/
+*.log
