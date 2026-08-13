@@ -51,6 +51,7 @@ Plugin Jeedom de supervision des **micro-onduleurs Hoymiles** (HMS-xxx-WB/T) via
 | `today_eq` | Production jour | Wh | Énergie du jour |
 | `month_eq` | Production mois | Wh | Énergie du mois |
 | `total_eq` | Production totale | Wh | Énergie cumulée |
+| `year_eq` | Production année | Wh | Énergie de l'année en cours |
 | `self_rate` | Autoconsommation | % | Taux d'autoconsommation |
 | `co2` | CO₂ évité | g | Émissions évitées |
 | `online` | En ligne | binaire | 1 si la station est connectée au cloud |
@@ -63,6 +64,7 @@ Plugin Jeedom de supervision des **micro-onduleurs Hoymiles** (HMS-xxx-WB/T) via
 | `pac` | Puissance AC | W | Puissance de sortie du micro |
 | `p1` / `p2` / `p3` / `p4` | PV 1..4 | W | Puissance par port PV (2 ports sur les HMS-1000) |
 | `connect` | Connecté | binaire | 1 si le micro répond (warn_data.connect) |
+| `warn` | Alerte | binaire | 1 si le micro signale une anomalie (warn_data.warn) |
 | `soft_ver` | Version firmware | texte | Version du firmware (info uniquement) |
 
 > Les commandes peuvent être renommées, reclassées dans vos objets, et utilisées dans les **virtuels**, **scénarios**, **widgets** et **designs** comme n'importe quelle commande Jeedom.

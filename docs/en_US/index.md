@@ -51,6 +51,7 @@ Jeedom plugin to monitor **Hoymiles microinverters** (HMS-xxx-WB/T) through the 
 | `today_eq` | Today production | Wh | Energy produced today |
 | `month_eq` | Month production | Wh | Energy this month |
 | `total_eq` | Total production | Wh | Cumulative energy |
+| `year_eq` | Year production | Wh | Energy this year |
 | `self_rate` | Self-consumption | % | Self-consumption rate |
 | `co2` | CO₂ avoided | g | Avoided emissions |
 | `online` | Online | binary | 1 if the station is online |
@@ -63,6 +64,7 @@ Jeedom plugin to monitor **Hoymiles microinverters** (HMS-xxx-WB/T) through the 
 | `pac` | AC power | W | Inverter output power |
 | `p1` / `p2` / `p3` / `p4` | PV 1..4 | W | Power per PV port (2 ports on HMS-1000) |
 | `connect` | Connected | binary | 1 if the inverter is responding (warn_data.connect) |
+| `warn` | Alarm | binary | 1 if the inverter reports an issue (warn_data.warn) |
 | `soft_ver` | Firmware version | text | Firmware version (info only) |
 
 > Commands can be renamed, moved into your rooms, and used in **virtuals**, **scenarios**, **widgets** and **designs** like any Jeedom command.

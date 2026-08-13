@@ -274,6 +274,7 @@ class hoymilescloud extends eqLogic
         self::createCommand($eq, 'real_power', 'Puissance PV', 'info', 'numeric', 'W', 'power');
         self::createCommand($eq, 'today_eq', 'Production jour', 'info', 'numeric', 'Wh');
         self::createCommand($eq, 'month_eq', 'Production mois', 'info', 'numeric', 'Wh');
+        self::createCommand($eq, 'year_eq', 'Production année', 'info', 'numeric', 'Wh');
         self::createCommand($eq, 'total_eq', 'Production totale', 'info', 'numeric', 'Wh');
         self::createCommand($eq, 'self_rate', 'Autoconsommation', 'info', 'numeric', '%');
         self::createCommand($eq, 'co2', 'CO2 évité', 'info', 'numeric', 'g');
@@ -288,6 +289,7 @@ class hoymilescloud extends eqLogic
         self::createCommand($eq, 'p2', 'PV2', 'info', 'numeric', 'W');
         self::createCommand($eq, 'p3', 'PV3', 'info', 'numeric', 'W');
         self::createCommand($eq, 'p4', 'PV4', 'info', 'numeric', 'W');
+        self::createCommand($eq, 'warn', 'Alerte', 'info', 'binary');
         self::createCommand($eq, 'connect', 'Connecté', 'info', 'binary', '', 'state');
         self::createCommand($eq, 'soft_ver', 'Firmware', 'info', 'string');
     }

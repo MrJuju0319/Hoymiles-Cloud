@@ -107,12 +107,21 @@ class HoymilesDaemon:
             self.push(st, "today_eq", d.get("today_eq"), t)
             self.push(st, "month_eq", d.get("month_eq"), t)
             self.push(st, "total_eq", d.get("total_eq"), t)
+            self.push(st, "year_eq", d.get("year_eq"), t)
             self.push(st, "self_rate", d.get("self_rate"), t)
             self.push(st, "co2", d.get("co2_emission_reduction"), t)
             self.push(st, "last_data_time", d.get("last_data_time", ""))
             self.push(st, "online", 1 if d.get("is_null") == 0 else 0)
-            # connexion micros via micro/find est trop coûteux en boucle ;
-            # le burst m:3 s'en charge (voir burst_poll)
+            # statut alerte des micros (warn_data.warn via select_by_station)
+            try:
+                for m in self.api.get_micros(self.sid):
+                    sn = m.get("sn")
+                    if not sn:
+                        continue
+                    wd = m.get("warn_data") or {}
+                    self.push(f"micro-{sn}", "warn", 1 if wd.get("warn") else 0)
+            except Exception as e:
+                log(f"warn micros échoué : {e}")
         except Exception as e:
             log(f"Slow poll échoué : {e}")
 

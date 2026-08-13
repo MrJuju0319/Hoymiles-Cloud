@@ -20,3 +20,7 @@ Première version publiée.
 ## 0.1.2 (2026-08-13)
 
 - **Amélioration** : la synchronisation ne renomme plus les équipements ni les commandes déjà personnalisés — le nom cloud n'est appliqué qu'à la création.
+
+## 0.1.3 (2026-08-13)
+
+- **Nouveautés** : commande `year_eq` (production annuelle, station) et commande `warn` (alerte micro-onduleur) — poussées toutes les 60 s.
