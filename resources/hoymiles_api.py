@@ -6,6 +6,9 @@ User-Agent sma/ad/2.10.0/159/0 obligatoire, auth sur euapi.hoymiles.com).
 """
 import base64
 import hashlib
+import hmac
+import os
+import subprocess
 import threading
 import time
 
@@ -23,6 +26,33 @@ PROFILES = {
 TOKEN_TTL = 7200  # validité observée ~2h
 URI_REFRESH_MS = 240000  # le token k de l'URI burst expire
 HTTP_TIMEOUT = 10  # timeout strict : un blocage réseau ne doit jamais figer le démon
+
+
+def jeedom_decrypt(value, jeedom_root):
+    """Déchiffre une valeur `crypt:...` produite par utils::encrypt() du core Jeedom
+    (AES-256-CBC + HMAC, clé dans data/jeedom_encryption.key).
+    Retourne la valeur en clair ; si le format n'est pas reconnu, retourne telle quelle
+    (rétrocompatibilité avec les anciennes configs runtime en clair)."""
+    if not value or not str(value).startswith("crypt:"):
+        return value
+    key_path = os.path.join(jeedom_root, "data", "jeedom_encryption.key")
+    try:
+        with open(key_path, "rb") as f:
+            enc_password = f.read().strip()
+        raw = base64.b64decode(str(value)[6:])
+        iv, mac, ciphertext = raw[:16], raw[16:48], raw[48:]
+        aes_key = hashlib.sha256(enc_password).digest()
+        if not hmac.compare_digest(
+            hmac.new(aes_key, ciphertext + iv, hashlib.sha256).digest(), mac):
+            raise ValueError("HMAC mismatch")
+        proc = subprocess.run(
+            ["openssl", "enc", "-d", "-aes-256-cbc", "-K", aes_key.hex(), "-iv", iv.hex()],
+            input=ciphertext, capture_output=True, timeout=5)
+        if proc.returncode != 0:
+            raise ValueError("openssl décodage échoué")
+        return proc.stdout.decode("utf-8")
+    except Exception as e:
+        raise RuntimeError(f"Impossible de déchiffrer le mot de passe (clé {key_path}) : {e}")
 
 
 class HoymilesCloudApi:

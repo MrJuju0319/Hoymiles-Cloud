@@ -196,6 +196,14 @@ Le démon tourne en **4 threads** : 3 collecteurs indépendants (burst, slow, da
 
 ---
 
+## 🔒 Sécurité
+
+- **Identifiants** : stockés chiffrés dans la table de configuration Jeedom (AES-256-CBC + HMAC) ; le fichier runtime du démon ne contient **jamais** le mot de passe en clair (chiffré `crypt:...`, permissions `0600`)
+- **AJAX** : session Jeedom + rôle admin + jeton anti-CSRF (`ajax::init()`) + whitelist d'actions — aucun SQL brut (tout passe par l'ORM Jeedom)
+- **Commandes système** : chaque argument de lancement du démon passe par `escapeshellarg()`
+- **Logs** : aucun secret (mot de passe, token) n'est journalisé
+- **Dépendances** : versions minimales épinglées (`requests>=2.32.3`, `argon2-cffi>=23.1.0`) — CVE réseau corrigées
+
 ## ❓ FAQ / Dépannage
 
 ### « Échec de la connexion » au test de connexion

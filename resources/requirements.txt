@@ -1,2 +1,5 @@
-requests>=2.25
-argon2-cffi>=21.0
+# Dépendances du démon Hoymiles Cloud — versions minimales épinglées (sécurité) :
+# requests : les versions < 2.32.0 présentent des CVE réseau connues (fixées en 2.32.x)
+# argon2-cffi : versions récentes requises pour l'auth Argon2id v3 S-Miles
+requests>=2.32.3
+argon2-cffi>=23.1.0

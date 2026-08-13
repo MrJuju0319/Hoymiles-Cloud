@@ -33,7 +33,7 @@ import urllib.parse
 import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hoymiles_api import HoymilesCloudApi, URI_REFRESH_MS, parse_day_data
+from hoymiles_api import HoymilesCloudApi, URI_REFRESH_MS, parse_day_data, jeedom_decrypt
 
 PID_DIR = "/tmp/jeedom/hoymilescloud"
 STATUS_FILE = PID_DIR + "/status.json"
@@ -95,6 +95,16 @@ class HoymilesDaemon:
             self.config = json.load(f)
         self.config_mtime = mtime
         self.mapping = self.config.get("mapping", {})
+        # Sécurité : le mot de passe S-Miles est stocké chiffré (crypt:...) dans le
+        # fichier runtime — déchiffrement avec la clé Jeedom avant utilisation.
+        # Jamais loggé, jamais réécrit en clair.
+        if self.config.get("password", "").startswith("crypt:"):
+            root = self.config.get("jeedom_root", "/var/www/html")
+            try:
+                self.config["password"] = jeedom_decrypt(self.config["password"], root)
+            except Exception as e:
+                log(f"ERREUR config : {e}")
+                self.config["password"] = ""
         log(f"Config chargée : {len(self.mapping)} équipement(s) mappé(s)")
 
     def cmd_id(self, eq_logical, cmd_logical):

@@ -47,9 +47,15 @@ class hoymilescloud extends eqLogic
         self::generateConfig();
 
         $path = realpath(dirname(__FILE__) . '/../../resources');
-        $cmd = 'nohup ' . $path . '/venv/bin/python3 ' . $path . '/hoymiles_daemon.py'
-            . ' --config ' . jeedom::getTmpFolder(self::PLUGIN_ID) . '/config.json'
-            . ' >> ' . log::getPathToLog('hoymilescloud_daemon') . ' 2>&1 &';
+        // Sécurité : chaque élément de la commande passe par escapeshellarg()
+        // (aucune injection de commande possible, même si un chemin était altéré)
+        $python = escapeshellarg($path . '/venv/bin/python3');
+        $script = escapeshellarg($path . '/hoymiles_daemon.py');
+        $config = escapeshellarg(jeedom::getTmpFolder(self::PLUGIN_ID) . '/config.json');
+        $logfile = escapeshellarg(log::getPathToLog('hoymilescloud_daemon'));
+        $cmd = 'nohup ' . $python . ' ' . $script
+            . ' --config ' . $config
+            . ' >> ' . $logfile . ' 2>&1 &';
         exec($cmd);
         $i = 0;
         while ($i < 30) {
@@ -174,23 +180,32 @@ class hoymilescloud extends eqLogic
             }
         }
 
+        // Sécurité : le mot de passe S-Miles ne transite JAMAIS en clair dans le
+        // fichier runtime — il est chiffré par utils::encrypt() (crypt:...) et
+        // déchiffré côté daemon avec la clé data/jeedom_encryption.key.
+        $pass = config::byKey('password', self::PLUGIN_ID, '', true);
+        if ($pass != '' && strpos($pass, 'crypt:') !== 0) {
+            $pass = utils::encrypt($pass);
+        }
         $config = array(
             'user' => config::byKey('user', self::PLUGIN_ID, ''),
-            'password' => config::byKey('password', self::PLUGIN_ID, '', true),
+            'password' => $pass,
             'profile' => config::byKey('profile', self::PLUGIN_ID, 'auto'),
             'burst_interval' => intval(config::byKey('burst_interval', self::PLUGIN_ID, 2)),
             'delta_threshold' => floatval(config::byKey('delta_threshold', self::PLUGIN_ID, 1)),
             'slow_interval' => intval(config::byKey('slow_interval', self::PLUGIN_ID, 60)),
             'jeedom_url' => 'http://127.0.0.1',
+            'jeedom_root' => realpath(dirname(__FILE__) . '/../../../..'),
             'apikey' => jeedom::getApiKey(self::PLUGIN_ID),
             'log' => log::getPathToLog('hoymilescloud_daemon'),
             'mapping' => $mapping,
         );
         $dir = jeedom::getTmpFolder(self::PLUGIN_ID);
         if (!file_exists($dir)) {
-            mkdir($dir, 0775, true);
+            mkdir($dir, 0750, true);
         }
         file_put_contents($dir . '/config.json', json_encode($config));
+        chmod($dir . '/config.json', 0600);  // restreint au seul user www-data
         log::add(self::PLUGIN_ID, 'debug', 'Config runtime générée (' . count($mapping) . ' équipement(s) mappé(s))');
     }
 

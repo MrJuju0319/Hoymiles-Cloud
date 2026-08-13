@@ -92,3 +92,17 @@ Découverte majeure : le cloud expose **toutes** les données électriques via l
 - Nouvelle action ajax `getStatus` → `getDaemonStatus()`.
 - **Fix** : méthode renommée `getDaemonStatus` (le core Jeedom définit déjà `eqLogic::getStatus()` — une redéclaration statique causait un fatal silencieux au chargement de la classe).
 - **Fix** : chemin ajax corrigé (`plugins/hoymilescloud/core/ajax/...`) — l'URL relative résolvait vers 404.
+
+
+---
+
+## 🧪 Version BÊTA — 0.1.6 (2026-08-13)
+
+> Branche `beta` — **en cours de test**, non validée pour la production.
+
+### 🔒 Audit sécurité (4 points, demandé par Julien)
+
+- **Identifiants et logs** : le mot de passe S-Miles n'est plus jamais écrit en clair dans le fichier runtime `/tmp/jeedom/hoymilescloud/config.json` — il est chiffré (`utils::encrypt()` → `crypt:...`, AES-256-CBC + HMAC avec la clé `data/jeedom_encryption.key`) et déchiffré côté daemon via `jeedom_decrypt()` (openssl, HMAC vérifié). Rétrocompat : les anciennes configs en clair continuent de fonctionner. **Permissions durcies** : config.json en `0600` (www-data uniquement), dossier runtime en `0750`. Le mot de passe ne transite jamais dans les logs (vérifié par grep).
+- **Exécution de commandes** : la commande de lancement du démon (`deamon_start()`) passe désormais chaque élément par `escapeshellarg()` — aucune injection de commande possible. `deamon_stop()` utilisait déjà `escapeshellarg()`.
+- **AJAX** : audit du modèle — déjà blindé (session Jeedom → rôle admin → `ajax::init()` anti-CSRF → whitelist d'actions explicite → aucun SQL brut, tout passe par l'ORM). Documenté en tête de `hoymilescloud.ajax.php`.
+- **Dépendances** : `requirements.txt` épinglé (`requests>=2.32.3` — CVE réseau corrigées en 2.32.x ; `argon2-cffi>=23.1.0`). Venv à jour : requests 2.34.2, argon2-cffi 25.1.0.
