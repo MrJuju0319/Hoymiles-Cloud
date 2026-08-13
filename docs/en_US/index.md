@@ -64,6 +64,11 @@ Jeedom plugin to monitor **Hoymiles microinverters** (HMS-xxx-WB/T) through the 
 | `pac` | AC power | W | Inverter output power |
 | `p1` / `p2` / `p3` / `p4` | PV 1..4 | W | Power per PV port (2 ports on HMS-1000) |
 | `connect` | Connected | binary | 1 if the inverter is responding (warn_data.connect) |
+| `up1` / `up2` | PV port 1/2 voltage | V | Panel DC voltage (5-min bucket) |
+| `ip1` / `ip2` | PV port 1/2 current | A | Panel DC current (5-min bucket) |
+| `uac` | Grid voltage | V | AC voltage (5-min bucket) |
+| `freq` | Grid frequency | Hz | AC frequency (5-min bucket) |
+| `temp` | Inverter temperature | °C | Internal case temperature (5-min bucket) |
 | `warn` | Alarm | binary | 1 if the inverter reports an issue (warn_data.warn) |
 | `soft_ver` | Firmware version | text | Firmware version (info only) |
 

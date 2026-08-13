@@ -24,3 +24,10 @@ Première version publiée.
 ## 0.1.3 (2026-08-13)
 
 - **Nouveautés** : commande `year_eq` (production annuelle, station) et commande `warn` (alerte micro-onduleur) — poussées toutes les 60 s.
+
+## 0.1.4 (2026-08-13)
+
+- **Nouvelles commandes micro** (endpoint `down_module_day_data`, protobuf, bucket 5 min — même grain que les graphiques de l'app S-Miles) :
+  - `up1`/`up2` : tension DC par port PV (V) ; `ip1`/`ip2` : courant DC par port (A)
+  - `uac` : tension réseau (V) ; `freq` : fréquence réseau (Hz) ; `temp` : température interne du micro (°C)
+- Daemon : fetch protobuf toutes les 5 min (config `day_data_interval`), parseur protobuf maison dans `hoymiles_api.py`.

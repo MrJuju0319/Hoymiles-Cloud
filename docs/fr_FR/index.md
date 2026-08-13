@@ -64,6 +64,11 @@ Plugin Jeedom de supervision des **micro-onduleurs Hoymiles** (HMS-xxx-WB/T) via
 | `pac` | Puissance AC | W | Puissance de sortie du micro |
 | `p1` / `p2` / `p3` / `p4` | PV 1..4 | W | Puissance par port PV (2 ports sur les HMS-1000) |
 | `connect` | Connecté | binaire | 1 si le micro répond (warn_data.connect) |
+| `up1` / `up2` | Tension PV port 1/2 | V | Tension DC du panneau (bucket 5 min) |
+| `ip1` / `ip2` | Courant PV port 1/2 | A | Courant DC du panneau (bucket 5 min) |
+| `uac` | Tension réseau | V | Tension AC (bucket 5 min) |
+| `freq` | Fréquence réseau | Hz | Fréquence AC (bucket 5 min) |
+| `temp` | Température micro | °C | Température interne du boîtier (bucket 5 min) |
 | `warn` | Alerte | binaire | 1 si le micro signale une anomalie (warn_data.warn) |
 | `soft_ver` | Version firmware | texte | Version du firmware (info uniquement) |
 

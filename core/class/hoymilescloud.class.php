@@ -289,6 +289,13 @@ class hoymilescloud extends eqLogic
         self::createCommand($eq, 'p2', 'PV2', 'info', 'numeric', 'W');
         self::createCommand($eq, 'p3', 'PV3', 'info', 'numeric', 'W');
         self::createCommand($eq, 'p4', 'PV4', 'info', 'numeric', 'W');
+        self::createCommand($eq, 'up1', 'Tension PV1', 'info', 'numeric', 'V', 'voltage');
+        self::createCommand($eq, 'up2', 'Tension PV2', 'info', 'numeric', 'V', 'voltage');
+        self::createCommand($eq, 'ip1', 'Courant PV1', 'info', 'numeric', 'A', 'current');
+        self::createCommand($eq, 'ip2', 'Courant PV2', 'info', 'numeric', 'A', 'current');
+        self::createCommand($eq, 'uac', 'Tension réseau', 'info', 'numeric', 'V', 'voltage');
+        self::createCommand($eq, 'freq', 'Fréquence réseau', 'info', 'numeric', 'Hz');
+        self::createCommand($eq, 'temp', 'Température micro', 'info', 'numeric', '°C', 'temperature');
         self::createCommand($eq, 'warn', 'Alerte', 'info', 'binary');
         self::createCommand($eq, 'connect', 'Connecté', 'info', 'binary', '', 'state');
         self::createCommand($eq, 'soft_ver', 'Firmware', 'info', 'string');

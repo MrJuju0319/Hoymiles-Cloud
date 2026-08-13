@@ -21,7 +21,7 @@ import urllib.parse
 import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from hoymiles_api import HoymilesCloudApi, URI_REFRESH_MS
+from hoymiles_api import HoymilesCloudApi, URI_REFRESH_MS, parse_day_data
 
 PID_DIR = "/tmp/jeedom/hoymilescloud"
 
@@ -44,6 +44,8 @@ class HoymilesDaemon:
         self.micro_missing = {}  # sn -> cycles consécutifs sans réponse
         self.sid = None
         self.micros = []  # [sn, ...]
+        self.micro_id_to_sn = {}  # id -> sn
+        self.next_day_data = 0
 
     # ---------- Config / mapping ----------
     def load_config(self):
@@ -187,6 +189,38 @@ class HoymilesDaemon:
                 self.burst_ok = False
             return 30000
 
+    def day_data_poll(self):
+        """down_module_day_data (protobuf) toutes les 5 min — tension réseau,
+        fréquence, température interne du micro et tension/courant DC par port
+        (dernier bucket 5 min, grain identique à l'app S-Miles)."""
+        try:
+            blob = self.api.get_day_data(self.sid, time.strftime("%Y-%m-%d"))
+            if not blob:
+                log("Day data : réponse vide/refusée — nouvel essai au prochain cycle")
+                return
+            data = parse_day_data(blob)
+            t = 0.1  # seuil serré : ces valeurs bougent peu entre 2 buckets
+            for mid, entry in data.get("micros", {}).items():
+                sn = self.micro_id_to_sn.get(mid)
+                if not sn:
+                    continue
+                eq = f"micro-{sn}"
+                for cmd, val in (("uac", entry.get("uac")), ("freq", entry.get("freq")),
+                                 ("temp", entry.get("temp"))):
+                    if val is not None:
+                        self.push(eq, cmd, round(val, 2), t)
+                for port, p in entry.get("ports", {}).items():
+                    if port not in (1, 2):
+                        continue
+                    if p.get("up") is not None:
+                        self.push(eq, f"up{port}", round(p["up"], 1), t)
+                    if p.get("ip") is not None:
+                        self.push(eq, f"ip{port}", round(p["ip"], 2), t)
+            log(f"Day data OK : {len(data.get('micros', {}))} micro(s) — "
+                f"uac/temp/up/ip mis à jour")
+        except Exception as e:
+            log(f"Day data échoué : {e}")
+
     # ---------- Boucle principale ----------
     def run(self):
         log("Démarrage du démon Hoymiles Cloud")
@@ -203,6 +237,7 @@ class HoymilesDaemon:
         if self.sid:
             micros = self.api.get_micros(self.sid)
             self.micros = [m["sn"] for m in micros]
+            self.micro_id_to_sn = {m["id"]: m["sn"] for m in micros if m.get("id")}
             log(f"Station {self.sid} — {len(self.micros)} micro(s): {self.micros}")
         else:
             self.micros = []
@@ -217,6 +252,7 @@ class HoymilesDaemon:
 
         next_slow = time.time()
         next_uri_check = 0
+        next_day_data = time.time() + 30  # 1er fetch 30 s après démarrage
         while True:
             try:
                 self.load_config()  # recharge si resync côté Jeedom
@@ -228,6 +264,10 @@ class HoymilesDaemon:
                     if self.sid:
                         self.slow_poll()
                     next_slow = time.time() + slow_interval
+
+                if self.sid and time.time() >= next_day_data:
+                    self.day_data_poll()
+                    next_day_data = time.time() + max(300, int(self.config.get("day_data_interval", 300)))
 
                 if self.burst_ok or self.burst_failures < 3:
                     dly = 10000
