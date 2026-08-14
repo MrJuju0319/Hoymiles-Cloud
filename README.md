@@ -115,6 +115,7 @@ graph LR
 | `p1` / `p2` / `p3` / `p4` | PV 1..4 | W | burst ~2-3 s | Puissance par port PV (2 ports sur les HMS-1000) |
 | `up1` / `up2` | Tension PV 1/2 | V | 5 min | **Tension DC du panneau** (grain graphique app) |
 | `ip1` / `ip2` | Courant PV 1/2 | A | 5 min | **Courant DC du panneau** |
+| `e1` / `e2` | Énergie PV 1/2 (jour) | Wh | 5 min | **Énergie cumulée du jour par port** (champ 4 du protobuf `down_module_day_data` — jamais zéroée hors ligne, c'est un compteur) |
 | `uac` | Tension réseau | V | 5 min | Tension AC |
 | `freq` | Fréquence réseau | Hz | 5 min | Fréquence AC |
 | `temp` | Température micro | °C | 5 min | Température interne du boîtier |
@@ -245,7 +246,7 @@ Le projet suit un **workflow de publication en 2 branches** :
 | Branche | Usage | Version actuelle |
 |---|---|---|
 | `stable` | **Production** — validée par Julien après tests réels | **0.1.8** |
-| `beta` | **Tests** — nouvelles fonctionnalités, corrections | 0.1.8 (en test) |
+| `beta` | **Tests** — nouvelles fonctionnalités, corrections | 0.1.9 (en test) |
 
 - Les **nouveautés arrivent toujours sur `beta`** et sont testées en conditions réelles (production réelle de la maison)
 - Une version passe sur `stable` **uniquement après validation** sur le terrain
