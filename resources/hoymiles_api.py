@@ -347,7 +347,8 @@ def parse_day_data(blob):
                                 if qf == 1 and qw == 2:
                                     vals = []
                                     for rf, rw, rv in _pb_parse(qv):
-                                        if rf in (1, 2, 3) and rw == 5:
+                                        # 1=up 2=ip 3=watt 4=énergie cumulée jour (Wh)
+                                        if rf in (1, 2, 3, 4) and rw == 5:
                                             vals.append(_pb_f32(rv))
                                     if vals:
                                         pts.append(vals)
@@ -372,6 +373,7 @@ def parse_day_data(blob):
                     "up": last[0] if len(last) > 0 else None,
                     "ip": last[1] if len(last) > 1 else None,
                     "p": last[2] if len(last) > 2 else None,
+                    "e": last[3] if len(last) > 3 else None,  # énergie cumulée jour (Wh)
                 }
             if ac_series.get(7):
                 entry["uac"] = ac_series[7][-1]

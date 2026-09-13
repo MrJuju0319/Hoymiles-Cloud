@@ -446,6 +446,11 @@ class HoymilesDaemon:
                         self.push(eq, f"up{port}", round(p["up"], 1), t)
                     if p.get("ip") is not None:
                         self.push(eq, f"ip{port}", round(p["ip"], 2), t)
+                    # énergie cumulée du jour par port (Wh) — jamais zéroée hors
+                    # ligne (hors ELECTRICAL_CMDS) : c'est un compteur, pas une
+                    # mesure instantanée.
+                    if p.get("e") is not None:
+                        self.push(eq, f"e{port}", round(p["e"], 1), t)
                 # codes d'alarme du jour (champs int16) — consommés par slow_poll
                 # pour le statut "Warning"/"Alerte" et le message d'erreur.
                 self.alarm_codes[sn] = entry.get("alarm_codes") or []

@@ -165,6 +165,67 @@ class hoymilescloud extends eqLogic
             log::add(self::PLUGIN_ID, 'warning', 'Démon arrêté — redémarrage auto');
             self::deamon_start();
         }
+        // Backfill historique : si le daemon/script a déposé un backfill.json
+        // dans le tmp du plugin, on l'ingère (REPLACE INTO — zéro doublon).
+        self::backfillHistory();
+    }
+
+    /**
+     * Ingère backfill.json (généré par resources/backfill.py) dans l'historique
+     * Jeedom. Format : {eq_logical: {cmd_logical: [[datetime, value], ...]}}.
+     * REPLACE INTO (PK cmd_id+datetime) → idempotent, aucun doublon même si
+     * certains points existent déjà (jours partiels poussés par le daemon).
+     * Le fichier est supprimé après ingestion.
+     */
+    public static function backfillHistory()
+    {
+        $file = jeedom::getTmpFolder(self::PLUGIN_ID) . '/backfill.json';
+        if (!file_exists($file)) {
+            return;
+        }
+        $data = json_decode(file_get_contents($file), true);
+        if (!is_array($data) || !$data) {
+            @unlink($file);
+            log::add(self::PLUGIN_ID, 'warning', 'backfill.json illisible ou vide — ignoré et supprimé');
+            return;
+        }
+        $total = 0;
+        $eqCount = 0;
+        try {
+            foreach ($data as $eqLogical => $cmds) {
+                $eq = eqLogic::byLogicalId($eqLogical, self::PLUGIN_ID);
+                if (!is_object($eq)) {
+                    log::add(self::PLUGIN_ID, 'debug', "backfill : équipement $eqLogical introuvable, ignoré");
+                    continue;
+                }
+                foreach ($cmds as $cmdLogical => $points) {
+                    $cmd = $eq->getCmd(null, $cmdLogical);
+                    if (!is_object($cmd) || $cmd->getType() != 'info' || $cmd->getSubType() != 'numeric') {
+                        continue;
+                    }
+                    $cid = $cmd->getId();
+                    foreach (array_chunk($points, 500) as $batch) {
+                        $values = array();
+                        foreach ($batch as $pt) {
+                            if (!is_array($pt) || count($pt) < 2 || $pt[1] === null) {
+                                continue;
+                            }
+                            $values[] = '(' . intval($cid) . ", '" . $pt[0] . "', '" . DB::escape($pt[1]) . "')";
+                        }
+                        if ($values) {
+                            $sql = 'REPLACE INTO history (cmd_id, `datetime`, value) VALUES ' . implode(',', $values);
+                            DB::prepare($sql)->execute();
+                            $total += count($values);
+                        }
+                    }
+                }
+                $eqCount++;
+            }
+            @unlink($file);
+            log::add(self::PLUGIN_ID, 'info', "Backfill historique : $total point(s) ingéré(s) sur $eqCount équipement(s) — fichier supprimé");
+        } catch (Exception $e) {
+            log::add(self::PLUGIN_ID, 'error', 'Backfill historique échoué : ' . $e->getMessage());
+        }
     }
 
     /* ===================== Config runtime ===================== */
@@ -349,6 +410,8 @@ class hoymilescloud extends eqLogic
         self::createCommand($eq, 'up2', 'Tension PV2', 'info', 'numeric', 'V', 'voltage');
         self::createCommand($eq, 'ip1', 'Courant PV1', 'info', 'numeric', 'A', 'current');
         self::createCommand($eq, 'ip2', 'Courant PV2', 'info', 'numeric', 'A', 'current');
+        self::createCommand($eq, 'e1', 'Énergie PV1 (jour)', 'info', 'numeric', 'Wh');
+        self::createCommand($eq, 'e2', 'Énergie PV2 (jour)', 'info', 'numeric', 'Wh');
         self::createCommand($eq, 'uac', 'Tension réseau', 'info', 'numeric', 'V', 'voltage');
         self::createCommand($eq, 'freq', 'Fréquence réseau', 'info', 'numeric', 'Hz');
         self::createCommand($eq, 'temp', 'Température micro', 'info', 'numeric', '°C', 'temperature');

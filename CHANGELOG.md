@@ -4,6 +4,12 @@ Le projet suit un workflow **bêta → stable** : les nouveautés arrivent sur l
 
 ---
 
+## 🧪 Version BÊTA — 0.1.9 (2026-08-14)
+
+### Énergie par port (e1/e2) + backfill historique 15 jours
+- **Nouveau champ protobuf découvert** : `down_module_day_data` contient un **champ 4 par point = énergie cumulée du jour du port (Wh)** → nouvelles commandes `e1`/`e2` (Énergie PV1/PV2 jour) par micro, mises à jour au cycle 5 min, **jamais zéroées** hors ligne (compteur, pas une mesure instantanée).
+- **Backfill historique** : `resources/backfill.py` récupère les 15 derniers jours de séries complètes par micro (up/ip/watt/énergie + uac/freq/temp, grain 5 min) et écrit `backfill.json` ; `hoymilescloud::backfillHistory()` (appelé par `cron15`) l'ingère via `REPLACE INTO history` (PK cmd_id+datetime → idempotent, zéro doublon). → **les courbes Jeedom remontent à l'installation des micros** (01/08/2026), plus besoin de l'app mobile pour l'historique.
+
 ## ✅ Version STABLE — 0.1.8 (2026-08-13)
 
 > ✔️ **Validée par Julien** — toute la série 0.1.1 → 0.1.8 est passée sur la branche `stable` (0.1.0 → 0.1.8). Résumé en une ligne par version (détails plus bas).
