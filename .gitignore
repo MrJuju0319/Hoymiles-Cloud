@@ -19,3 +19,6 @@ resources/venv/
 # Déploiement Jeedom (runtime, recréés par install.sh)
 /tmp/
 *.log
+
+# Tests (cache local)
+.pytest_cache/
