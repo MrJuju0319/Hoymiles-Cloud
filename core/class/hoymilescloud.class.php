@@ -22,7 +22,7 @@ class hoymilescloud extends eqLogic
         $pid_file = jeedom::getTmpFolder(self::PLUGIN_ID) . '/daemon.pid';
         if (file_exists($pid_file)) {
             $pid = trim(file_get_contents($pid_file));
-            if (posix_getsid($pid) !== false) {
+            if (self::daemonPidAlive($pid)) {
                 $return['state'] = 'ok';
             } else {
                 shell_exec('rm -f ' . escapeshellarg($pid_file));
@@ -52,7 +52,11 @@ class hoymilescloud extends eqLogic
         $python = escapeshellarg($path . '/venv/bin/python3');
         $script = escapeshellarg($path . '/hoymiles_daemon.py');
         $config = escapeshellarg(jeedom::getTmpFolder(self::PLUGIN_ID) . '/config.json');
-        $logfile = escapeshellarg(log::getPathToLog('hoymilescloud_daemon'));
+        // Le démon écrit lui-même son log (WatchedFileHandler → il se réattache
+        // après chaque rotation/chunk Jeedom). La sortie standard part donc dans
+        // un log console séparé : plus de fichier creux rempli d'octets NUL et de
+        // lignes dupliquées dans le log principal.
+        $logfile = escapeshellarg(log::getPathToLog('hoymilescloud_console'));
         $cmd = 'nohup ' . $python . ' ' . $script
             . ' --config ' . $config
             . ' >> ' . $logfile . ' 2>&1 &';
@@ -79,13 +83,35 @@ class hoymilescloud extends eqLogic
         $pid_file = jeedom::getTmpFolder(self::PLUGIN_ID) . '/daemon.pid';
         if (file_exists($pid_file)) {
             $pid = trim(file_get_contents($pid_file));
-            if (posix_getsid($pid) !== false) {
-                posix_kill($pid, 15);
+            if (self::daemonPidAlive($pid)) {
+                posix_kill(intval($pid), 15);
             }
             shell_exec('rm -f ' . escapeshellarg($pid_file));
         }
         // kill de secours (pid file introuvable) — pattern ciblé, jamais de pkill large
         shell_exec('pkill -f "resources/hoymiles_daemon.py" 2>/dev/null');
+    }
+
+    /**
+     * Le PID du pid file correspond-il vraiment à NOTRE démon ?
+     *
+     * posix_getsid() seul est insuffisant : si le PID a été recyclé par un autre
+     * processus, posix_getsid() répond « vivant » alors que le démon est mort →
+     * le core (plugin::checkDeamon toutes les 5 min) ne le relance jamais et les
+     * données se figent silencieusement. On vérifie donc la ligne de commande.
+     * Utilisé aussi par deamon_stop() : on ne tue JAMAIS un PID étranger.
+     */
+    private static function daemonPidAlive($pid)
+    {
+        $pid = intval($pid);
+        if ($pid <= 0 || posix_getsid($pid) === false) {
+            return false;
+        }
+        $cmdline = @file_get_contents('/proc/' . $pid . '/cmdline');
+        if (!is_string($cmdline) || $cmdline === '') {
+            return false;  // /proc illisible → impossible de confirmer, on considère mort
+        }
+        return strpos($cmdline, 'hoymiles_daemon.py') !== false;
     }
 
     public static function getDaemonStatus()
@@ -130,7 +156,18 @@ class hoymilescloud extends eqLogic
 
     public static function deamon_changeAutoMode($mode)
     {
-        self::deamon_stop();
+        // Appelé par le core quand l'utilisateur active/désactive le mode
+        // automatique : 'enable' doit DÉMARRER le démon (l'ancien code l'arrêtait
+        // dans les deux cas, le démon attendait alors le cron du core ≤ 5 min).
+        if ($mode == 'enable') {
+            try {
+                self::deamon_start();
+            } catch (Exception $e) {
+                log::add(self::PLUGIN_ID, 'error', 'Démarrage automatique du démon impossible : ' . $e->getMessage());
+            }
+        } else {
+            self::deamon_stop();
+        }
     }
 
     /* ===================== Dépendances ===================== */
@@ -154,6 +191,15 @@ class hoymilescloud extends eqLogic
         );
     }
 
+    public static function cron5()
+    {
+        // Ingestion du backfill historique (fichier déposé par la page de
+        // configuration ou par resources/backfill.py). Sans ce cron — et sans
+        // l'enregistrement des crons dans plugin_info/install.php — la méthode
+        // n'est JAMAIS appelée et le backfill ne remonte pas dans Jeedom.
+        self::backfillHistory();
+    }
+
     public static function cron15()
     {
         // Vérification périodique que le démon tourne
@@ -165,8 +211,8 @@ class hoymilescloud extends eqLogic
             log::add(self::PLUGIN_ID, 'warning', 'Démon arrêté — redémarrage auto');
             self::deamon_start();
         }
-        // Backfill historique : si le daemon/script a déposé un backfill.json
-        // dans le tmp du plugin, on l'ingère (REPLACE INTO — zéro doublon).
+        // Filet de sécurité : si le cron5 n'est pas actif (plugin mis à jour
+        // depuis une version antérieure), l'ingestion passe ici (idempotente).
         self::backfillHistory();
     }
 
@@ -185,8 +231,9 @@ class hoymilescloud extends eqLogic
         }
         $data = json_decode(file_get_contents($file), true);
         if (!is_array($data) || !$data) {
-            @unlink($file);
-            log::add(self::PLUGIN_ID, 'warning', 'backfill.json illisible ou vide — ignoré et supprimé');
+            // Fichier illisible : on l'écarte sans le perdre (diagnostic possible).
+            @rename($file, $file . '.bad');
+            log::add(self::PLUGIN_ID, 'warning', 'backfill.json illisible ou vide — renommé en backfill.json.bad');
             return;
         }
         $total = 0;
@@ -210,11 +257,21 @@ class hoymilescloud extends eqLogic
                             if (!is_array($pt) || count($pt) < 2 || $pt[1] === null) {
                                 continue;
                             }
-                            $values[] = '(' . intval($cid) . ", '" . $pt[0] . "', '" . DB::escape($pt[1]) . "')";
+                            // Horodatage strictement contrôlé (jamais de valeur
+                            // brute injectée dans le SQL) : Y-m-d H:i:s.
+                            if (!preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', (string) $pt[0])) {
+                                continue;
+                            }
+                            // ⚠️ DB::escape()/DB::prepare() n'existent pas dans le
+                            // core Jeedom → erreur fatale silencieuse (Error, non
+                            // attrapé par catch(Exception)). On passe par la
+                            // connexion DBAL : quote() + exec().
+                            $values[] = '(' . intval($cid) . ", '" . $pt[0] . "', "
+                                . DB::getConnection()->quote($pt[1]) . ')';
                         }
                         if ($values) {
                             $sql = 'REPLACE INTO history (cmd_id, `datetime`, value) VALUES ' . implode(',', $values);
-                            DB::prepare($sql)->execute();
+                            DB::getConnection()->exec($sql);
                             $total += count($values);
                         }
                     }
@@ -223,9 +280,117 @@ class hoymilescloud extends eqLogic
             }
             @unlink($file);
             log::add(self::PLUGIN_ID, 'info', "Backfill historique : $total point(s) ingéré(s) sur $eqCount équipement(s) — fichier supprimé");
-        } catch (Exception $e) {
-            log::add(self::PLUGIN_ID, 'error', 'Backfill historique échoué : ' . $e->getMessage());
+        } catch (\Throwable $e) {
+            // \Throwable (et non Exception) : les erreurs PHP 7+ (méthode
+            // inexistante, type error…) ne sont pas des Exception.
+            // Le fichier est CONSERVÉ : il sera rejoué au prochain cron.
+            log::add(self::PLUGIN_ID, 'error', 'Backfill historique échoué (fichier conservé pour rejeu) : ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Réparation de l'historisation : les versions ≤ 0.1.9 écrivaient une clé de
+     * configuration `history` (jamais lue par le core) au lieu d'appeler
+     * setIsHistorized() → aucune courbe pour les tensions/courants/Hz/température
+     * et les puissances par port. Action explicite (jamais automatique) pour ne
+     * pas écraser un choix utilisateur.
+     */
+    public static function repairHistory()
+    {
+        $fixed = 0;
+        foreach (eqLogic::byType(self::PLUGIN_ID) as $eq) {
+            foreach ($eq->getCmd() as $cmd) {
+                $lid = $cmd->getLogicalId();
+                if ($cmd->getType() != 'info' || $cmd->getSubType() != 'numeric') {
+                    continue;
+                }
+                // Compteurs d'énergie par port : jamais historisés (ils ne
+                // repartent pas de zéro, la courbe est un escalier inutile).
+                if (preg_match('/^e\d+$/', $lid)) {
+                    continue;
+                }
+                if ($cmd->getIsHistorized() == 1) {
+                    continue;
+                }
+                $cmd->setIsHistorized(1);
+                $cmd->save();
+                $fixed++;
+            }
+        }
+        log::add(self::PLUGIN_ID, 'info', "Réparation de l'historisation : $fixed commande(s) passée(s) en historisée");
+        return array('ok' => true, 'message' => $fixed . ' commande(s) désormais historisée(s)');
+    }
+
+    /**
+     * Backfill « un clic » : exécute resources/backfill.py (venv du plugin) sur
+     * les N derniers jours (15 max — limite de l'API cloud) puis ingère le JSON
+     * dans l'historique Jeedom. Les identifiants ne passent jamais en ligne de
+     * commande (visibles dans `ps`) : ils sont écrits dans un fichier 0600 du
+     * tmp du plugin, supprimé immédiatement après l'exécution.
+     */
+    public static function runBackfill($days = 15)
+    {
+        $days = max(1, min(intval($days), 15));
+        $path = realpath(dirname(__FILE__) . '/../../resources');
+        $python = $path . '/venv/bin/python3';
+        if (!file_exists($python)) {
+            throw new Exception(__('Dépendances Python absentes — cliquez d\'abord sur « Relancer les dépendances »', __FILE__));
+        }
+        $user = config::byKey('user', self::PLUGIN_ID, '');
+        $pass = config::byKey('password', self::PLUGIN_ID, '');
+        if ($user == '' || $pass == '') {
+            throw new Exception(__('Identifiants S-Miles manquants dans la configuration du plugin', __FILE__));
+        }
+        $tmp = jeedom::getTmpFolder(self::PLUGIN_ID);
+        if (!file_exists($tmp)) {
+            mkdir($tmp, 0750, true);
+        }
+        $sid = '';
+        foreach (eqLogic::byType(self::PLUGIN_ID) as $eq) {
+            if (strpos($eq->getLogicalId(), 'station-') === 0) {
+                $sid = str_replace('station-', '', $eq->getLogicalId());
+                break;
+            }
+        }
+        $auth_file = $tmp . '/backfill_auth.json';
+        $out_file = $tmp . '/backfill.json';
+        @unlink($out_file);  // évite d'ingérer un fichier précédent
+        file_put_contents($auth_file, json_encode(array(
+            'user' => $user, 'password' => $pass, 'sid' => $sid,
+            'days' => $days, 'out' => $out_file,
+        )));
+        chmod($auth_file, 0600);
+        // Exécution en arrière-plan : récupérer 15 jours demande une quinzaine
+        // d'appels API et peut dépasser le délai d'exécution d'une requête AJAX.
+        // Le script supprime lui-même le fichier d'authentification (0600) dès
+        // qu'il l'a lu. Le fichier produit est ingéré par le cron5 (≤ 5 min) ou
+        // immédiatement s'il est déjà prêt.
+        $log = log::getPathToLog('hoymilescloud_backfill');
+        exec('nohup ' . escapeshellarg($python) . ' ' . escapeshellarg($path . '/backfill.py')
+            . ' --config ' . escapeshellarg($auth_file)
+            . ' >> ' . escapeshellarg($log) . ' 2>&1 &');
+        // Attente courte (≤ 20 s) pour rendre le résultat quand c'est possible
+        for ($i = 0; $i < 20; $i++) {
+            if (file_exists($out_file)) {
+                break;
+            }
+            sleep(1);
+        }
+        if (!file_exists($out_file)) {
+            log::add(self::PLUGIN_ID, 'info', 'Backfill lancé en arrière-plan — ingestion par le cron5');
+            return array('ok' => true, 'message' => 'Récupération lancée en arrière-plan (' . $days . ' jours). Les points seront ingérés automatiquement dans les 5 minutes (cron5) — voir le log hoymilescloud_backfill en cas de doute.');
+        }
+        $points = 0;
+        $decoded = json_decode(file_get_contents($out_file), true);
+        if (is_array($decoded)) {
+            foreach ($decoded as $cmds) {
+                foreach ($cmds as $pts) {
+                    $points += count($pts);
+                }
+            }
+        }
+        self::backfillHistory();
+        return array('ok' => true, 'message' => $points . ' point(s) récupéré(s) puis ingéré(s) dans l\'historique (' . $days . ' jours)');
     }
 
     /* ===================== Config runtime ===================== */
@@ -255,10 +420,13 @@ class hoymilescloud extends eqLogic
             'burst_interval' => intval(config::byKey('burst_interval', self::PLUGIN_ID, 2)),
             'delta_threshold' => floatval(config::byKey('delta_threshold', self::PLUGIN_ID, 1)),
             'slow_interval' => intval(config::byKey('slow_interval', self::PLUGIN_ID, 60)),
+            'day_data_interval' => max(300, intval(config::byKey('day_data_interval', self::PLUGIN_ID, 300))),
+            'log_level' => config::byKey('log_level', self::PLUGIN_ID, 'info'),
             'jeedom_url' => 'http://127.0.0.1',
             'jeedom_root' => realpath(dirname(__FILE__) . '/../../../..'),
             'apikey' => jeedom::getApiKey(self::PLUGIN_ID),
             'log' => log::getPathToLog('hoymilescloud_daemon'),
+            'log_console' => log::getPathToLog('hoymilescloud_console'),
             'mapping' => $mapping,
         );
         $dir = jeedom::getTmpFolder(self::PLUGIN_ID);
@@ -322,10 +490,12 @@ class hoymilescloud extends eqLogic
             foreach ($micros as $micro) {
                 $sn = $micro['sn'];
                 $model = isset($micro['model_no']) && $micro['model_no'] != '' ? $micro['model_no'] : 'HMS';
+                $ports = isset($micro['ports']) && is_array($micro['ports']) && $micro['ports'] ? $micro['ports'] : array(1, 2);
                 $eqMicro = self::getOrCreateEqLogic('micro-' . $sn, $model . ' (' . $sn . ')', 'Micro-onduleur');
-                self::createMicroCommands($eqMicro);
+                self::createMicroCommands($eqMicro, $ports);
                 $eqMicro->setConfiguration('sn', $sn);
                 $eqMicro->setConfiguration('sid', $sid);
+                $eqMicro->setConfiguration('ports', implode(',', $ports));
                 $eqMicro->save();
                 $created++;
             }
@@ -356,7 +526,7 @@ class hoymilescloud extends eqLogic
         return $eq;
     }
 
-    private static function createCommand($eqLogic, $logicalId, $name, $type, $subtype, $unite = '', $template = '')
+    private static function createCommand($eqLogic, $logicalId, $name, $type, $subtype, $unite = '', $template = '', $historize = true)
     {
         $cmd = $eqLogic->getCmd(null, $logicalId);
         $isNew = false;
@@ -370,6 +540,13 @@ class hoymilescloud extends eqLogic
         // Nom uniquement à la création : préserve les noms personnalisés.
         if ($isNew) {
             $cmd->setName($name);
+            // Historisation : la colonne Jeedom est `isHistorized` (API
+            // setIsHistorized). L'ancien code écrivait une clé de configuration
+            // `history`, que le core ne lit JAMAIS → aucune courbe n'était créée
+            // pour les tensions/courants/températures/puissances par port.
+            // Appliqué uniquement à la création pour respecter un choix
+            // utilisateur ultérieur (case décochée à la main).
+            $cmd->setIsHistorized(($type == 'info' && $subtype == 'numeric' && $historize) ? 1 : 0);
         }
         $cmd->setType($type);
         $cmd->setSubType($subtype);
@@ -378,7 +555,6 @@ class hoymilescloud extends eqLogic
             $cmd->setTemplate('dashboard', $template);
             $cmd->setTemplate('mobile', $template);
         }
-        $cmd->setConfiguration('history', $type == 'info' && $subtype == 'numeric' ? 1 : 0);
         $cmd->save();
         return $cmd;
     }
@@ -399,22 +575,28 @@ class hoymilescloud extends eqLogic
         self::createCommand($eq, 'daemon', 'Démon OK', 'info', 'binary', '', 'state');
     }
 
-    private static function createMicroCommands($eq)
+    private static function createMicroCommands($eq, $ports = array(1, 2))
     {
         self::createCommand($eq, 'pac', 'Puissance AC', 'info', 'numeric', 'W', 'power');
-        self::createCommand($eq, 'p1', 'PV1', 'info', 'numeric', 'W');
-        self::createCommand($eq, 'p2', 'PV2', 'info', 'numeric', 'W');
-        self::createCommand($eq, 'p3', 'PV3', 'info', 'numeric', 'W');
-        self::createCommand($eq, 'p4', 'PV4', 'info', 'numeric', 'W');
-        self::createCommand($eq, 'up1', 'Tension PV1', 'info', 'numeric', 'V', 'voltage');
-        self::createCommand($eq, 'up2', 'Tension PV2', 'info', 'numeric', 'V', 'voltage');
-        self::createCommand($eq, 'ip1', 'Courant PV1', 'info', 'numeric', 'A', 'current');
-        self::createCommand($eq, 'ip2', 'Courant PV2', 'info', 'numeric', 'A', 'current');
-        self::createCommand($eq, 'e1', 'Énergie PV1 (jour)', 'info', 'numeric', 'Wh');
-        self::createCommand($eq, 'e2', 'Énergie PV2 (jour)', 'info', 'numeric', 'Wh');
         self::createCommand($eq, 'uac', 'Tension réseau', 'info', 'numeric', 'V', 'voltage');
         self::createCommand($eq, 'freq', 'Fréquence réseau', 'info', 'numeric', 'Hz');
         self::createCommand($eq, 'temp', 'Température micro', 'info', 'numeric', '°C', 'temperature');
+        // Ports réellement exposés par le micro (2 MPPT sur un HMS-1000-2WB,
+        // 4 sur un HMS-1600/2000-4WB) : plus de p3/p4 fantômes sur les micros
+        // 2 ports, et les micros 4 ports sont désormais couverts.
+        $ports = array_values(array_unique(array_map('intval', (array) $ports)));
+        sort($ports);
+        if (!$ports) {
+            $ports = array(1, 2);
+        }
+        foreach ($ports as $p) {
+            self::createCommand($eq, 'p' . $p, 'PV' . $p, 'info', 'numeric', 'W');
+            self::createCommand($eq, 'up' . $p, 'Tension PV' . $p, 'info', 'numeric', 'V', 'voltage');
+            self::createCommand($eq, 'ip' . $p, 'Courant PV' . $p, 'info', 'numeric', 'A', 'current');
+            // Énergie cumulée du jour par port : compteur (jamais remis à zéro),
+            // non historisée — la courbe serait un escalier sans intérêt.
+            self::createCommand($eq, 'e' . $p, 'Énergie PV' . $p . ' (jour)', 'info', 'numeric', 'Wh', '', false);
+        }
         self::createCommand($eq, 'warn', 'Alerte', 'info', 'binary');
         self::createCommand($eq, 'connect', 'Connecté', 'info', 'binary', '', 'state');
         self::createCommand($eq, 'soft_ver', 'Firmware', 'info', 'string');
@@ -497,6 +679,7 @@ class HoymilesCloudApi
     {
         // 1) v3 home (euapi + UA sma/ad) — profil confirmé pour les comptes S-Miles Home
         $profiles = array('home', 'installer', 'web');
+        $lastMessage = 'inconnu';
         foreach ($profiles as $profile) {
             $base = self::PROFILES[$profile]['base'];
             $pre = $this->post($base . '/iam/pub/3/auth/pre-insp', array('u' => $this->user), $profile);
@@ -519,6 +702,14 @@ class HoymilesCloudApi
                     $this->token = $resp['data']['token'];
                     return array('ok' => true, 'method' => 'v3/' . $profile);
                 }
+                $lastMessage = isset($resp['message']) ? $resp['message'] : 'inconnu';
+                // Identifiants refusés : inutile de retenter les 3 profils.
+                // 3 échecs de login rapprochés depuis la même IP = cooldown
+                // cloud de 5 à 10 min (« Login failed »), ce qui laisserait le
+                // plugin sans données jusqu'à expiration.
+                if (preg_match('/login failed|password|identifiant|account can only/i', $lastMessage)) {
+                    return array('ok' => false, 'message' => $lastMessage);
+                }
             }
         }
         // 2) fallback v0 (md5)
@@ -528,7 +719,7 @@ class HoymilesCloudApi
             $this->token = $resp['data']['token'];
             return array('ok' => true, 'method' => 'v0');
         }
-        return array('ok' => false, 'message' => isset($resp['message']) ? $resp['message'] : 'inconnu');
+        return array('ok' => false, 'message' => isset($resp['message']) ? $resp['message'] : $lastMessage);
     }
 
     public function getStations()
@@ -548,7 +739,20 @@ class HoymilesCloudApi
         $list = isset($resp['data']['list']) ? $resp['data']['list'] : array();
         $out = array();
         foreach ($list as $m) {
-            $out[] = array('sn' => $m['sn'], 'model_no' => isset($m['model_no']) ? $m['model_no'] : '');
+            // port_array (ex. [1,2] sur un HMS-1000-2WB, [1,2,3,4] sur un 4 MPPT) :
+            // sert à ne créer que les commandes réellement exploitables.
+            $ports = array();
+            if (isset($m['port_array']) && is_array($m['port_array'])) {
+                $ports = array_values(array_filter(array_map('intval', $m['port_array'])));
+            }
+            if (!$ports) {
+                $ports = array(1, 2);
+            }
+            $out[] = array(
+                'sn' => $m['sn'],
+                'model_no' => isset($m['model_no']) ? $m['model_no'] : '',
+                'ports' => $ports,
+            );
         }
         return $out;
     }
