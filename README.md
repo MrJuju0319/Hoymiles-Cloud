@@ -67,7 +67,13 @@ git clone -b stable https://github.com/MrJuju0319/Hoymiles-Cloud.git hoymilesclo
 |---|---|
 | **Email S-Miles** | Identifiant de votre compte S-Miles (adresse email) |
 | **Mot de passe** | Mot de passe du compte S-Miles (chiffré par Jeedom) |
+| **Intervalle minimum burst** | Plancher (s) entre deux mesures temps réel — `2` par défaut ; le serveur S-Miles impose de toute façon son propre rythme (1,5 à 3 s) |
 | **Seuil de changement** | Différence minimale (W, Wh, %, …) pour pousser une valeur vers Jeedom — `1` par défaut |
+| **Polling énergies** | Intervalle (s) des énergies/statut/heartbeat — `60` par défaut |
+| **Données électriques** | Intervalle (s) des tensions/courants/fréquence/température — `300` par défaut (minimum 300) |
+| **Niveau de log du démon** | Normal / Détaillé (diagnostic) / Réduit (erreurs seulement) |
+| **Maintenance → Réparer l'historisation** | Coche la case *Historiser* des commandes numériques (utile si les courbes sont vides) |
+| **Maintenance → Récupérer l'historique** | Importe les 15 derniers jours de mesures par micro depuis le cloud (exécution en arrière-plan, ingestion automatique) |
 
 ### Étapes pas à pas
 
@@ -186,7 +192,7 @@ Le démon tourne en **4 threads** : 3 collecteurs indépendants (burst, slow, da
 - **3 échecs de burst** → repli automatique sur le polling seul (mode dégradé) + backoff exponentiel
 - **Rate-limit silencieux** de `count_station_real_data` (réponses vides temporaires) → warning au log, retry au cycle suivant — le temps réel n'est jamais affecté
 - **Cooldown login** (~3-4/min) → le démon ne relogine jamais en boucle
-- **Supervision** : cron15 Jeedom surveille le démon et le relance si nécessaire
+- **Supervision** : crons Jeedom (cron5 = ingestion du backfill, cron15 = watchdog du démon, en plus du contrôle automatique du core toutes les 5 min)
 - **Re-synchronisation** : le démon recharge la config à chaque cycle si vous ajoutez des équipements
 
 ### API utilisée (récapitulatif)
@@ -246,7 +252,7 @@ Le projet suit un **workflow de publication en 2 branches** :
 | Branche | Usage | Version actuelle |
 |---|---|---|
 | `stable` | **Production** — validée par Julien après tests réels | **0.1.9** |
-| `beta` | **Tests** — nouvelles fonctionnalités, corrections | prochaine version (en préparation) |
+| `beta` | **Tests** — nouvelles fonctionnalités, corrections | **0.1.10** (en test) |
 
 - Les **nouveautés arrivent toujours sur `beta`** et sont testées en conditions réelles (production réelle de la maison)
 - Une version passe sur `stable` **uniquement après validation** sur le terrain
@@ -273,7 +279,7 @@ git clone -b beta https://github.com/MrJuju0319/Hoymiles-Cloud.git hoymilescloud
 
 - **Contrôle** (limitation de puissance, arrêt/relance) : non exposé dans cette version — l'API utilisée est en **lecture seule**. Une API de contrôle existe chez Hoymiles mais n'est pas encore intégrée (prévu).
 - **Température des panneaux** : les micros HMS n'ont **aucun capteur de température de surface** — seul le boîtier interne est mesuré (`temp`). Pour la température des panneaux : capteur dédié ou API météo.
-- **Historique cloud long** (15 jours par micro) : nécessite la clé API officielle (wapi.hoymiles.com) — prévu dans une version ultérieure.
+- **Historique** : les 15 derniers jours par micro sont récupérables directement depuis le plugin (page de configuration → **Récupérer l'historique (15 jours)**, via `down_module_day_data`). La clé API officielle (wapi.hoymiles.com) reste réservée aux statistiques longues au-delà de 15 jours.
 - L'app S-Miles et le plugin partagent le même compte : les sessions simultanées sont tolérées.
 
 ---

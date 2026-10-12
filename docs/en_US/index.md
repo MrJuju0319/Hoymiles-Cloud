@@ -30,7 +30,13 @@ Jeedom plugin to monitor **Hoymiles microinverters** (HMS-xxx-WB/T) through the 
 |---|---|
 | **S-Miles email** | Your S-Miles account identifier (e.g. email address) |
 | **Password** | S-Miles account password (encrypted by Jeedom) |
+| **Minimum burst interval** | Floor (s) between two real-time measurements — 2 by default |
 | **Change threshold** | Minimum difference (W, Wh, %, value) before pushing a value to Jeedom — 1 by default |
+| **Energy polling** | Interval (s) for energy counters, status and heartbeat — 60 by default |
+| **Electrical data** | Interval (s) for voltages/currents/frequency/temperature — 300 by default |
+| **Daemon log level** | Normal / Detailed / Reduced |
+| **Fix historisation** | Ticks the *Historize* box on numeric commands (empty charts) |
+| **Fetch history (15 days)** | Imports the last 15 days of measurements from the cloud |
 
 ### Steps
 
@@ -80,7 +86,7 @@ Jeedom plugin to monitor **Hoymiles microinverters** (HMS-xxx-WB/T) through the 
 - **Realtime** : `data/burst` endpoints (`m:0` = station, `m:3` = inverters) at the server-paced cadence (~1.5-3 s)
 - **Energies/status** : `count_station_real_data` every 60 s
 - **Smart push** : a value is pushed only when it changes by more than the configured threshold (keeps history lean)
-- **Resilience** : after 3 burst failures, fallback to polling with exponential backoff; re-login only when the token expires; auto-supervision via cron15
+- **Resilience** : after 3 burst failures, fallback to polling with exponential backoff; re-login only when the token expires; auto-supervision via the plugin crons (cron15) and the Jeedom core
 - **Security** : credentials never leave your server (the daemon reads them from the encrypted Jeedom config)
 
 ## 6. Versions — Beta vs Stable
@@ -89,8 +95,8 @@ The project follows a **beta → stable** workflow: new features land on the `be
 
 | Branch | Usage | Version |
 |---|---|---|
-| `stable` / `master` | Production — validated | 0.1.0 |
-| `beta` | Testing — new features | 0.1.4 |
+| `stable` | Production — validated | 0.1.9 |
+| `beta` | Testing — new features | 0.1.10 |
 
 📜 Detailed changelog: [CHANGELOG.md](../../CHANGELOG.md) · [Full README](../../README.md)
 
@@ -113,7 +119,7 @@ No — independent community project. Hoymiles / S-Miles trademarks belong to th
 ## 8. Known limitations
 
 - **Control** (power limit, shutdown) : not exposed in this version (read-only API). An official control API exists but is not integrated yet.
-- **Cloud history** : long statistics (15 days per inverter) require the official API key (wapi.hoymiles.com) — planned for a later version.
+- **History** : the last 15 days per inverter can be fetched straight from the plugin (configuration page → **Fetch history (15 days)**, through `down_module_day_data`). The official API key (wapi.hoymiles.com) is only needed for longer statistics.
 - The S-Miles app and this plugin share the same account : concurrent sessions are tolerated.
 
 ---

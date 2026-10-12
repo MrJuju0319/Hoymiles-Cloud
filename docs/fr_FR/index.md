@@ -30,7 +30,13 @@ Plugin Jeedom de supervision des **micro-onduleurs Hoymiles** (HMS-xxx-WB/T) via
 |---|---|
 | **Email S-Miles** | Identifiant du compte S-Miles (ex. votre adresse email) |
 | **Mot de passe** | Mot de passe du compte S-Miles (stocké chiffré par Jeedom) |
+| **Intervalle minimum burst** | Plancher (s) entre deux mesures temps réel — 2 par défaut |
 | **Seuil de changement** | Différence minimale (W, Wh, %, valeur) pour pousser une valeur vers Jeedom — 1 par défaut |
+| **Polling énergies** | Intervalle (s) des énergies, du statut et du heartbeat — 60 par défaut |
+| **Données électriques** | Intervalle (s) des tensions/courants/fréquence/température — 300 par défaut |
+| **Niveau de log du démon** | Normal / Détaillé / Réduit |
+| **Réparer l'historisation** | Coche la case *Historiser* des commandes numériques (courbes vides) |
+| **Récupérer l'historique (15 jours)** | Importe les 15 derniers jours de mesures depuis le cloud |
 
 ### Étapes
 
@@ -81,7 +87,7 @@ Plugin Jeedom de supervision des **micro-onduleurs Hoymiles** (HMS-xxx-WB/T) via
 - **Temps réel** : endpoints `data/burst` (`m:0` = station, `m:3` = micros) au rythme dicté par le serveur (~1,5-3 s)
 - **Énergies/statut** : `count_station_real_data` toutes les 60 s
 - **Push intelligent** : une valeur n'est poussée que si elle change de plus que le seuil configuré (évite de saturer l'historique)
-- **Résilience** : après 3 échecs de burst, repli sur polling + backoff exponentiel ; re-login seulement si le token expire ; supervision automatique par cron15
+- **Résilience** : après 3 échecs de burst, repli sur polling + backoff exponentiel ; re-login seulement si le token expire ; supervision automatique par les crons du plugin (cron15) et par le core Jeedom
 - **Sécurité** : les identifiants ne quittent jamais le serveur (le daemon les lit dans la config Jeedom chiffrée)
 
 ## 6. Versions — Bêta vs Stable
@@ -90,8 +96,8 @@ Le projet suit un workflow **bêta → stable** : les nouveautés arrivent sur l
 
 | Branche | Usage | Version |
 |---|---|---|
-| `stable` / `master` | Production — validée | 0.1.0 |
-| `beta` | Tests — nouveautés | 0.1.4 |
+| `stable` | Production — validée | 0.1.9 |
+| `beta` | Tests — nouveautés | 0.1.10 |
 
 📜 Changelog détaillé : [CHANGELOG.md](../../CHANGELOG.md) · [README complet](../../README.md)
 
@@ -114,7 +120,7 @@ Non — projet communautaire indépendant. Les marques Hoymiles / S-Miles appart
 ## 8. Limitations connues
 
 - **Contrôle** (limitation de puissance, arrêt) : non exposé dans cette version (l'API utilisée est en lecture). Une API officielle de contrôle existe chez Hoymiles mais n'est pas encore intégrée.
-- **Historique cloud** : les statistiques longues (15 jours par micro) nécessitent la clé API officielle (wapi.hoymiles.com) — prévu dans une version ultérieure.
+- **Historique** : les 15 derniers jours par micro sont récupérables depuis le plugin (Configuration → **Récupérer l'historique (15 jours)**). La clé API officielle (wapi.hoymiles.com) reste nécessaire au-delà de 15 jours.
 - L'application S-Miles et ce plugin partagent le même compte : les sessions simultanées sont tolérées.
 
 ---
