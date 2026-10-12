@@ -11,10 +11,12 @@
 | | |
 |---|---|
 | ⚡ **Temps réel** | Puissance station + par micro, burst ~2-3 s (mêmes endpoints que l'app) |
-| 📊 **Énergies** | Production jour / mois / **année** / totale, autoconsommation, CO₂ évité |
+| 📊 **Énergies** | Production jour / mois / **année** / totale, en Wh **et kWh**, autoconsommation, CO₂ évité |
 | 🔌 **Électrique** | **Tensions PV par port** (V), **courants PV** (A), **tension réseau** (V), **fréquence** (Hz), **température du micro** (°C) |
 | 🚨 **Alertes** | État connecté + alerte anomalie par micro |
 | 🤖 **Automatique** | Synchronisation cloud en 1 clic (station + tous les micros), démon auto-surveillé |
+| 📅 **Rapport quotidien** | Message Jeedom à 21 h : production du jour, comparaison veille, pic de puissance, détail par micro |
+| 🕘 **Historique 15 jours** | Import en un clic des 15 derniers jours de mesures depuis le cloud |
 | 🧠 **Push intelligent** | Seuil de changement configurable : l'historique Jeedom n'est pas noyé |
 | 🔒 **Sécurisé** | Identifiants stockés chiffrés par Jeedom, jamais en dur, ne quittent pas le serveur |
 | 🌍 **Multi-langue** | Français, English |
@@ -72,6 +74,7 @@ git clone -b stable https://github.com/MrJuju0319/Hoymiles-Cloud.git hoymilesclo
 | **Polling énergies** | Intervalle (s) des énergies/statut/heartbeat — `60` par défaut |
 | **Données électriques** | Intervalle (s) des tensions/courants/fréquence/température — `300` par défaut (minimum 300) |
 | **Niveau de log du démon** | Normal / Détaillé (diagnostic) / Réduit (erreurs seulement) |
+| **Rapport quotidien** | Message Jeedom à 21 h (production du jour, comparaison veille, pic, détail par micro) — `Oui` par défaut |
 | **Maintenance → Réparer l'historisation** | Coche la case *Historiser* des commandes numériques (utile si les courbes sont vides) |
 | **Maintenance → Récupérer l'historique** | Importe les 15 derniers jours de mesures par micro depuis le cloud (exécution en arrière-plan, ingestion automatique) |
 
@@ -107,7 +110,9 @@ graph LR
 | `month_eq` | Production mois | Wh | 60 s | Énergie du mois |
 | `year_eq` | Production année | Wh | 60 s | Énergie de l'année en cours |
 | `total_eq` | Production totale | Wh | 60 s | Énergie cumulée |
-| `self_rate` | Autoconsommation | % | burst + 60 s | Taux d'autoconsommation |
+| `self_rate` | Autoconsommation | % | 60 s | Taux d'autoconsommation |
+| `today_kwh` | Production jour (kWh) | kWh | 60 s | Équivalent lisible de `today_eq` (historizé) |
+| `month_kwh` / `year_kwh` / `total_kwh` | Production mois / année / totale | kWh | 60 s | Équivalents lisibles (non historisés : compteurs cumulés) |
 | `co2` | CO₂ évité | g | 60 s | Émissions évitées |
 | `online` | En ligne | binaire | 60 s | 1 si la station répond |
 | `daemon` | Démon OK | binaire | 60 s (forcé) | **Heartbeat** du démon — mis à jour toutes les 60 s ; utilisez-le dans un scénario pour alerter si les données ne se rafraîchissent plus |

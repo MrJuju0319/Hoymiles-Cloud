@@ -70,6 +70,14 @@
                 <option value="warning">{{Réduit (erreurs seulement)}}</option>
             </select>
         </div>
+        <label class="col-sm-3 control-label">{{Rapport quotidien}}</label>
+        <div class="col-sm-3">
+            <select class="configKey form-control" data-l1key="daily_report">
+                <option value="1">{{Oui (21 h, message Jeedom)}}</option>
+                <option value="0">{{Non}}</option>
+            </select>
+            <span class="help-block">{{Production du jour, comparaison veille, pic et détail par micro.}}</span>
+        </div>
     </div>
 </fieldset>
 

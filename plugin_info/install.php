@@ -27,12 +27,14 @@ function hoymilescloud_install()
 function hoymilescloud_update($_direct = true)
 {
     // ---------- Crons ----------
-    // cron5  : ingestion du backfill.json (idempotent, fichier supprimé après)
-    // cron15 : watchdog du démon (le core relance déjà via checkDeamon, ceci
-    //          reste un filet de sécurité + ingestion de secours)
+    // cron5     : ingestion du backfill.json (idempotent, fichier supprimé après)
+    // cron15    : watchdog du démon (le core relance déjà via checkDeamon, ceci
+    //             reste un filet de sécurité + ingestion de secours)
+    // cronDaily : rapport quotidien de production (21 h)
     $crons = array(
         'cron5' => '*/5 * * * *',
         'cron15' => '*/15 * * * *',
+        'cronDaily' => '0 21 * * *',
     );
     foreach ($crons as $function => $schedule) {
         $cron = cron::byClassAndFunction('hoymilescloud', $function);
@@ -69,7 +71,7 @@ function hoymilescloud_remove()
 {
     // Nettoyage : sans cela les crons continuent d'être appelés après
     // désinstallation (classe introuvable → erreurs dans le log cron).
-    foreach (array('cron5', 'cron15') as $function) {
+    foreach (array('cron5', 'cron15', 'cronDaily') as $function) {
         $cron = cron::byClassAndFunction('hoymilescloud', $function);
         if (is_object($cron)) {
             $cron->remove();

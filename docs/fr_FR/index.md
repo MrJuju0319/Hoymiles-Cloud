@@ -59,6 +59,8 @@ Plugin Jeedom de supervision des **micro-onduleurs Hoymiles** (HMS-xxx-WB/T) via
 | `total_eq` | Production totale | Wh | Énergie cumulée |
 | `year_eq` | Production année | Wh | Énergie de l'année en cours |
 | `self_rate` | Autoconsommation | % | Taux d'autoconsommation |
+| `today_kwh` | Production jour (kWh) | kWh | Équivalent lisible de `today_eq` |
+| `month_kwh` / `year_kwh` / `total_kwh` | Production mois / année / totale | kWh | Équivalents lisibles des compteurs Wh |
 | `co2` | CO₂ évité | g | Émissions évitées |
 | `online` | En ligne | binaire | 1 si la station est connectée au cloud |
 | `daemon` | Démon OK | binaire | Heartbeat du démon (mis à jour toutes les 60 s) — pour scénario d'alerte si plus de mise à jour |

@@ -387,6 +387,12 @@ class HoymilesDaemon:
             self.push(st, "month_eq", d.get("month_eq"), t)
             self.push(st, "total_eq", d.get("total_eq"), t)
             self.push(st, "year_eq", d.get("year_eq"), t)
+            # Équivalents en kWh (simple conversion) — seuil serré 0,01 : avec le
+            # seuil standard de 1, aucune variation de kWh ne serait poussée.
+            for cmd, src in (("today_kwh", "today_eq"), ("month_kwh", "month_eq"),
+                             ("year_kwh", "year_eq"), ("total_kwh", "total_eq")):
+                if d.get(src) is not None:
+                    self.push(st, cmd, round(float(d[src]) / 1000.0, 3), 0.01)
             self.push(st, "self_rate", d.get("self_rate"), t)
             self.push(st, "co2", d.get("co2_emission_reduction"), t)
             self.push(st, "last_data_time", d.get("last_data_time", ""))

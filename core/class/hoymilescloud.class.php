@@ -200,6 +200,115 @@ class hoymilescloud extends eqLogic
         self::backfillHistory();
     }
 
+    /**
+     * Rapport quotidien de production (cron, 21 h par défaut, désactivable).
+     *
+     * Exploite l'historique Jeedom (fiable depuis la correction du backfill) :
+     * production du jour, comparaison veille + moyenne des jours précédents,
+     * pic de puissance avec son heure, autoconsommation et détail par micro.
+     * Rien n'est envoyé si aucune production n'a été mesurée (journée sans
+     * soleil, démon arrêté) — un message « 0 kWh » quotidien serait du bruit.
+     */
+    public static function cronDaily()
+    {
+        if (config::byKey('daily_report', self::PLUGIN_ID, 1) != 1) {
+            log::add(self::PLUGIN_ID, 'debug', 'Rapport quotidien désactivé (configuration)');
+            return;
+        }
+        $station = null;
+        foreach (eqLogic::byType(self::PLUGIN_ID) as $eq) {
+            if (strpos($eq->getLogicalId(), 'station-') === 0) {
+                $station = $eq;
+                break;
+            }
+        }
+        if (!is_object($station)) {
+            return;
+        }
+        $db = DB::getConnection();
+        $cmdToday = $station->getCmd(null, 'today_eq');
+        $cmdPower = $station->getCmd(null, 'real_power');
+        $cmdSelf = $station->getCmd(null, 'self_rate');
+
+        $todayWh = is_object($cmdToday) ? floatval($cmdToday->getCache('value', 0)) : 0;
+        if ($todayWh <= 0 && is_object($cmdToday)) {
+            // Repli sur l'historique si le cache n'est pas encore alimenté
+            $todayWh = floatval($db->query('SELECT value FROM history WHERE cmd_id = ' . intval($cmdToday->getId()) . ' ORDER BY datetime DESC LIMIT 1')->fetchColumn());
+        }
+        if ($todayWh <= 0) {
+            log::add(self::PLUGIN_ID, 'info', "Rapport quotidien : aucune production mesurée aujourd'hui — pas d'envoi");
+            return;
+        }
+
+        // Totaux des jours précédents : MAX() = total du jour, le compteur
+        // today_eq repartant de zéro à minuit.
+        $hist = array();
+        if (is_object($cmdToday)) {
+            $sql = 'SELECT DATE(datetime) AS j, MAX(CAST(value AS DECIMAL(20,4))) AS v FROM history'
+                . ' WHERE cmd_id = ' . intval($cmdToday->getId())
+                . ' AND datetime >= DATE_SUB(CURDATE(), INTERVAL 8 DAY) AND DATE(datetime) < CURDATE()'
+                . ' GROUP BY DATE(datetime) ORDER BY j DESC';
+            foreach ($db->query($sql)->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                $hist[$r['j']] = floatval($r['v']);
+            }
+        }
+        $yesterday = $hist ? reset($hist) : null;
+        $avg = $hist ? array_sum($hist) / count($hist) : null;
+
+        // Pic de puissance du jour
+        $peak = null;
+        if (is_object($cmdPower)) {
+            $sql = 'SELECT value, datetime FROM history WHERE cmd_id = ' . intval($cmdPower->getId())
+                . ' AND datetime >= CURDATE() ORDER BY CAST(value AS DECIMAL(20,4)) DESC LIMIT 1';
+            $r = $db->query($sql)->fetch(PDO::FETCH_ASSOC);
+            if ($r && $r['value'] !== null) {
+                $peak = array('value' => floatval($r['value']), 'time' => date('H:i', strtotime($r['datetime'])));
+            }
+        }
+
+        // Détail par micro : somme des énergies par port du jour (e1, e2…)
+        $micros = array();
+        foreach (eqLogic::byType(self::PLUGIN_ID) as $eq) {
+            if (strpos($eq->getLogicalId(), 'micro-') !== 0) {
+                continue;
+            }
+            $wh = 0;
+            foreach ($eq->getCmd() as $cmd) {
+                if (preg_match('/^e\d+$/', $cmd->getLogicalId())) {
+                    $wh += floatval($cmd->getCache('value', 0));
+                }
+            }
+            if ($wh > 0) {
+                $micros[] = $eq->getName() . ' ' . number_format($wh / 1000, 2, ',', ' ') . ' kWh';
+            }
+        }
+
+        $msg = '☀️ <b>Production solaire du jour : ' . number_format($todayWh / 1000, 2, ',', ' ') . ' kWh</b>';
+        $details = array();
+        if ($yesterday !== null && $yesterday > 0) {
+            $delta = round(($todayWh - $yesterday) / $yesterday * 100);
+            $details[] = 'Hier ' . number_format($yesterday / 1000, 2, ',', ' ') . ' kWh (' . ($delta >= 0 ? '+' : '') . $delta . ' %)';
+        }
+        if ($avg !== null) {
+            $details[] = 'Moyenne ' . count($hist) . ' j : ' . number_format($avg / 1000, 2, ',', ' ') . ' kWh';
+        }
+        if ($peak !== null) {
+            $details[] = 'Pic ' . round($peak['value']) . ' W à ' . $peak['time'];
+        }
+        if (is_object($cmdSelf) && $cmdSelf->getCache('value', null) !== null) {
+            $details[] = 'Autoconso ' . round(floatval($cmdSelf->getCache('value', 0))) . ' %';
+        }
+        if ($details) {
+            $msg .= '<br>' . implode(' · ', $details);
+        }
+        if ($micros) {
+            $msg .= '<br>' . implode(' · ', $micros);
+        }
+        message::add(self::PLUGIN_ID, $msg);
+        log::add(self::PLUGIN_ID, 'info', 'Rapport quotidien envoyé (' . number_format($todayWh / 1000, 2, ',', ' ') . ' kWh)');
+        return $msg;
+    }
+
     public static function cron15()
     {
         // Vérification périodique que le démon tourne
@@ -568,6 +677,12 @@ class hoymilescloud extends eqLogic
         self::createCommand($eq, 'month_eq', 'Production mois', 'info', 'numeric', 'Wh');
         self::createCommand($eq, 'year_eq', 'Production année', 'info', 'numeric', 'Wh');
         self::createCommand($eq, 'total_eq', 'Production totale', 'info', 'numeric', 'Wh');
+        // Équivalents lisibles en kWh (mêmes sources, simple conversion) : les
+        // commandes Wh sont conservées telles quelles (compatibilité scénarios).
+        self::createCommand($eq, 'today_kwh', 'Production jour (kWh)', 'info', 'numeric', 'kWh');
+        self::createCommand($eq, 'month_kwh', 'Production mois (kWh)', 'info', 'numeric', 'kWh', '', false);
+        self::createCommand($eq, 'year_kwh', 'Production année (kWh)', 'info', 'numeric', 'kWh', '', false);
+        self::createCommand($eq, 'total_kwh', 'Production totale (kWh)', 'info', 'numeric', 'kWh', '', false);
         self::createCommand($eq, 'self_rate', 'Autoconsommation', 'info', 'numeric', '%');
         self::createCommand($eq, 'co2', 'CO2 évité', 'info', 'numeric', 'g');
         self::createCommand($eq, 'last_data_time', 'Dernière donnée', 'info', 'string');
