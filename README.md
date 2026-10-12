@@ -245,8 +245,8 @@ Le projet suit un **workflow de publication en 2 branches** :
 
 | Branche | Usage | Version actuelle |
 |---|---|---|
-| `stable` | **Production** — validée par Julien après tests réels | **0.1.8** |
-| `beta` | **Tests** — nouvelles fonctionnalités, corrections | 0.1.9 (en test) |
+| `stable` | **Production** — validée par Julien après tests réels | **0.1.9** |
+| `beta` | **Tests** — nouvelles fonctionnalités, corrections | prochaine version (en préparation) |
 
 - Les **nouveautés arrivent toujours sur `beta`** et sont testées en conditions réelles (production réelle de la maison)
 - Une version passe sur `stable` **uniquement après validation** sur le terrain
