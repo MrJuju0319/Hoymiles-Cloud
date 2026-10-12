@@ -11,6 +11,9 @@ Architecture v0.1.5 (validée 13/08/2026) — threads + file d'attente :
   HTTP vers Jeedom de façon séquentielle (timeout strict 10 s).
 - Timeouts stricts partout (API ≤ 10 s, day_data 15 s, push 10 s) : un blocage
   réseau = un appel échoué, jamais un démon figé.
+- Log : écrit par le démon lui-même (WatchedFileHandler) dans le log Jeedom — il
+  se réattache après chaque rotation/chunk, sinon le fichier devenait creux et
+  rempli d'octets NUL. Niveau réglable (Normal / Détaillé / Réduit).
 - Aucune écriture disque en fonctionnement normal (important carte SD Raspberry Pi) :
   le pid file est écrit 1× au démarrage, la config est relue depuis /tmp (écrite par
   Jeedom), et status.json n'est écrit QUE lors d'un CHANGEMENT d'état (rare).
@@ -22,41 +25,71 @@ Architecture v0.1.5 (validée 13/08/2026) — threads + file d'attente :
   de OFF_LINE_DELAY (300 s) → valeurs électriques (V/A/W/Hz) forcées à 0
   (comportement "pleine nuit") : aucun scénario ne voit une valeur figée d'un
   micro déconnecté. La température interne reste à sa dernière valeur connue.
+- Ports dynamiques : les séries day_data sont poussées pour TOUS les ports
+  présents (2 MPPT sur un HMS-1000-2WB, 4 sur un 4 MPPT).
+- Logique pure (zeroing, statuts de santé, cadence) dans hoymiles_logic.py,
+  couverte par tests/ (pytest + CI GitHub Actions).
 
 Usage: hoymiles_daemon.py --config /tmp/jeedom/hoymilescloud/config.json
 """
 import argparse
 import json
+import logging
 import os
 import queue
 import sys
 import threading
 import time
 import urllib.parse
+from logging.handlers import WatchedFileHandler
 
 import requests
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from hoymiles_api import (HoymilesCloudApi, URI_REFRESH_MS, parse_day_data,
-                          jeedom_decrypt, ALARM_MESSAGES)
+                          jeedom_decrypt)
+from hoymiles_logic import (ELECTRICAL_CMDS, OFF_LINE_DELAY, alarm_status,
+                            burst_delay_ms, entry_ports, offline_zero)
 
 PID_DIR = "/tmp/jeedom/hoymilescloud"
 STATUS_FILE = PID_DIR + "/status.json"
 PUSH_TIMEOUT = 10      # timeout strict des push Jeedom
 HEARTBEAT_CMD = "daemon"  # commande binaire de santé, poussée en force
 
-# Zeroing micro hors ligne (v0.1.8) : après ce délai (s) sans `connect` cloud,
-# les commandes électriques du micro sont forcées à 0 (comportement nuit).
-OFF_LINE_DELAY = 300
-# Commandes électriques concernées : tensions (V), courants (A), production (W),
-# fréquence (Hz). `temp` est volontairement exclue (valeur thermique : en pleine
-# nuit la température interne du micro ne tomberait pas à 0).
-ELECTRICAL_CMDS = {"uac", "up1", "up2", "ip1", "ip2", "freq", "pac",
-                   "p1", "p2", "p3", "p4"}
+LOGGER = logging.getLogger("hoymilescloud")
 
 
-def log(msg):
-    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
+def setup_logging(path=None, level="info"):
+    """Le démon écrit lui-même son log (fichier fourni par Jeedom).
+
+    WatchedFileHandler : le handler détecte que le fichier a été renommé ou
+    tronqué (rotation / « chunk » par Jeedom) et le rouvre automatiquement.
+    Sans cela, le démon continue d'écrire dans l'inode déplacé → fichier creux
+    rempli d'octets NUL et lignes perdues (constaté en production : log de
+    7,9 Mo illisible pour grep).
+    """
+    lvl = getattr(logging, str(level or "info").upper(), logging.INFO)
+    LOGGER.setLevel(lvl)
+    for h in list(LOGGER.handlers):
+        LOGGER.removeHandler(h)
+    if not path:
+        return
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        handler = WatchedFileHandler(path, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("[%(asctime)s] %(message)s", "%Y-%m-%d %H:%M:%S"))
+        LOGGER.addHandler(handler)
+    except Exception as e:  # dépend du système de fichiers
+        print(f"Log fichier indisponible ({e}) — sortie console uniquement", flush=True)
+
+
+def log(msg, level=logging.INFO):
+    """Log applicatif. Repli sur la sortie standard si aucun fichier n'est
+    disponible (le log console est capturé par le lanceur Jeedom)."""
+    if LOGGER.handlers:
+        LOGGER.log(level, msg)
+    else:
+        print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {msg}", flush=True)
 
 
 class HoymilesDaemon:
@@ -80,6 +113,7 @@ class HoymilesDaemon:
         self.sid = None
         self.micros = []  # [sn, ...]
         self.micro_id_to_sn = {}  # id -> sn
+        self.micro_ports = {}  # sn -> [ports MPPT réellement exposés]
 
         # file d'attente + threads
         self.q = queue.Queue(maxsize=2000)
@@ -151,37 +185,27 @@ class HoymilesDaemon:
 
     # ---------- Push Jeedom (file d'attente, non bloquant) ----------
     def _offline_zero(self, eq_logical, cmd_logical):
-        """True si la valeur doit être forcée à 0 : micro hors ligne (flag cloud
-        `connect` — même source que le statut "Alerte") depuis plus de
+        """Délègue à hoymiles_logic.offline_zero (fonction pure testée).
+
+        Vrai si la valeur doit être forcée à 0 : micro hors ligne (flag cloud
+        `connect` — même source que le statut « Alerte ») depuis plus de
         OFF_LINE_DELAY, sur une commande électrique (V/A/W/Hz).
         Station : real_power forcée à 0 seulement si TOUS les micros sont
         hors ligne (sinon on masquerait la production des micros sains)."""
-        if eq_logical.startswith("station-"):
-            # real_power (production station) : zéro seulement si TOUS les micros
-            # sont hors ligne depuis OFF_LINE_DELAY (sinon on masquerait la
-            # production des micros sains). Les autres commandes station ne sont
-            # jamais zéroées (énergies cumulées, %, co2…).
-            if cmd_logical == "real_power" and self.micros:
-                now = time.time()
-                return all(s in self.offline_since and
-                           (now - self.offline_since[s]) >= OFF_LINE_DELAY
-                           for s in self.micros)
-            return False
-        if cmd_logical not in ELECTRICAL_CMDS:
-            return False
-        if eq_logical.startswith("micro-"):
-            sn = eq_logical[len("micro-"):]
-            since = self.offline_since.get(sn)
-            return since is not None and (time.time() - since) >= OFF_LINE_DELAY
-        return False
+        return offline_zero(eq_logical, cmd_logical, self.offline_since,
+                            self.micros, time.time(), OFF_LINE_DELAY)
 
     def push(self, eq_logical, cmd_logical, value, threshold=None, force=False):
         """Mise en file — le thread pusher s'occupe du HTTP (timeout strict).
         force=True (heartbeat) : contourne le push intelligent.
         Micro hors ligne > OFF_LINE_DELAY : les valeurs électriques sont
-        remplacées par 0 avant mise en file (aucune valeur figée remontée)."""
-        if value is not None and self._offline_zero(eq_logical, cmd_logical):
+        remplacées par 0 avant mise en file (aucune valeur figée remontée).
+        Une valeur absente (None) est ignorée — sinon urlencode() la
+        transmettrait à Jeedom sous la forme de la chaîne « None »."""
+        if self._offline_zero(eq_logical, cmd_logical):
             value = 0
+        if value is None:
+            return
         self.q.put((eq_logical, cmd_logical, value, threshold, force))
 
     def _do_push(self, eq_logical, cmd_logical, value, threshold, force):
@@ -261,8 +285,11 @@ class HoymilesDaemon:
                 st = f"station-{self.sid}"
                 if power.get("pv") is not None:
                     self.push(st, "real_power", power["pv"], t)
-                if power.get("pvr") is not None:
-                    self.push(st, "self_rate", power["pvr"], t)
+                # ⚠️ `power["pvr"]` n'est PLUS poussé dans la commande
+                # Autoconsommation (%) : cet indicateur du burst n'a pas l'unité
+                # de la commande, qui est alimentée par le cloud
+                # (count_station_real_data.self_rate) → les deux sources se
+                # contredisaient dans la même commande Jeedom toutes les 60 s.
             else:
                 raise RuntimeError(f"burst m:0 → {resp.get('status')} {resp.get('message')}")
 
@@ -281,7 +308,10 @@ class HoymilesDaemon:
                         self.micro_missing[sn] = 0
                         eq = f"micro-{sn}"
                         self.push(eq, "pac", mi.get("pac"), t)
-                        for p in (1, 2, 3, 4):
+                        # Uniquement les ports réellement exposés par le micro
+                        # (port_array du cloud) : plus de push fantôme vers p3/p4
+                        # sur un micro 2 MPPT.
+                        for p in self.micro_ports.get(sn, [1, 2]):
                             self.push(eq, f"p{p}", mi.get(f"p{p}"), t)
                         self.push(eq, "connect", 1)
                     for sn in self.micros:
@@ -294,7 +324,9 @@ class HoymilesDaemon:
                     self._set_status(burst_ok=True, error=None)
                 else:
                     raise RuntimeError(f"burst m:3 → {resp.get('status')} {resp.get('message')}")
-            return dly
+            # Rythme : `dly` imposé par le serveur, avec l'intervalle minimum
+            # configuré comme plancher (paramètre « Intervalle minimum burst »).
+            return burst_delay_ms(dly, self.config.get("burst_interval", 2))
         except Exception as e:
             self.burst_failures += 1
             log(f"Burst échec #{self.burst_failures} : {e}")
@@ -319,28 +351,17 @@ class HoymilesDaemon:
     def _alarm_status(self, warn, connect, codes):
         """Traduit l'état brut S-Miles en 3 statuts lisibles pour Jeedom.
 
-        Logique de sévérité (simple et documentée) :
-        - connect=False          → "Alerte"  : perte de liaison = plus critique
+        Logique de sévérité (délègue à hoymiles_logic.alarm_status, testée) :
+        - connect=False          → « Alerte »  : perte de liaison = plus critique
                                                 (plus aucune production remontée)
-        - warn=True / codes non vide → "Warning" : le micro répond mais signale
+        - warn=True / codes non vide → « Warning » : le micro répond mais signale
                                                 une anomalie (sur-tension, sur-temp…)
-        - sinon                  → "Normal"
+        - sinon                  → « Normal »
 
         Le message d'erreur est dérivé du 1er code d'alarme (protobuf day_data,
         enum AlarmReason) ; si seul le booléen cloud est disponible, message
         générique. Retourne (statut, message)."""
-        if not connect:
-            return "Alerte", "Micro-onduleur hors ligne"
-        if warn or codes:
-            code = codes[0] if codes else None
-            if code is not None:
-                msg = ALARM_MESSAGES.get(code, f"Alarme (code {code})")
-            else:
-                msg = "Anomalie détectée"
-            return "Warning", msg
-        # Sentinelle "OK" (et non "" vide) : le core Jeedom refuse les valeurs vides
-        # (core/api/jeeApi.php l.114 : `init('value') != ''` → event jamais déclenché).
-        return "Normal", "OK"
+        return alarm_status(warn, connect, codes)
 
     # ---------- Boucle lente (énergies + statut + heartbeat) ----------
     def slow_poll(self):
@@ -354,7 +375,11 @@ class HoymilesDaemon:
                     self._set_status(slow_ok=False, error="slow poll vide x3 (rate-limit ?)")
                 return
             self.slow_failures = 0
-            log(f"Slow poll OK : today_eq={d.get('today_eq')} last={d.get('last_data_time')}")
+            # Niveau debug : cette ligne tombe toutes les 60 s (≈ 1400/jour) et
+            # noyait le log ; l'utilisateur peut l'activer via « Niveau de log
+            # du démon → Détaillé ».
+            log(f"Slow poll OK : today_eq={d.get('today_eq')} last={d.get('last_data_time')}",
+                logging.DEBUG)
             t = self.config.get("delta_threshold", 1)
             st = f"station-{self.sid}"
             self.push(st, "real_power", d.get("real_power"), t)
@@ -439,9 +464,12 @@ class HoymilesDaemon:
                                  ("temp", entry.get("temp"))):
                     if val is not None:
                         self.push(eq, cmd, round(val, 2), t)
-                for port, p in entry.get("ports", {}).items():
-                    if port not in (1, 2):
-                        continue
+                for port in entry_ports(entry):
+                    # Ports réellement exposés par le micro (2 MPPT sur un
+                    # HMS-1000-2WB, 4 sur un 4 MPPT) : l'ancien code filtrait
+                    # `if port not in (1, 2)` et tronquait silencieusement les
+                    # micros 4 MPPT.
+                    p = entry["ports"][port]
                     if p.get("up") is not None:
                         self.push(eq, f"up{port}", round(p["up"], 1), t)
                     if p.get("ip") is not None:
@@ -474,8 +502,14 @@ class HoymilesDaemon:
 
     # ---------- Démarrage ----------
     def run(self):
+        # Log configuré au plus tôt (chemin fourni par Jeedom, ou HOYMILES_LOG
+        # pour un lancement manuel) : les erreurs de démarrage doivent être
+        # visibles dans le log du plugin, pas seulement sur la sortie standard.
+        setup_logging(os.environ.get("HOYMILES_LOG"),
+                      os.environ.get("HOYMILES_LOG_LEVEL", "info"))
         log("Démarrage du démon Hoymiles Cloud")
         self.load_config()
+        setup_logging(self.config.get("log"), self.config.get("log_level", "info"))
         self.api = HoymilesCloudApi(self.config["user"], self.config["password"],
                                     profile=self.config.get("profile", "auto"))
         self.api.ensure_token()
@@ -489,6 +523,19 @@ class HoymilesDaemon:
             micros = self.api.get_micros(self.sid)
             self.micros = [m["sn"] for m in micros]
             self.micro_id_to_sn = {m["id"]: m["sn"] for m in micros if m.get("id")}
+            # port_array du cloud (ex. [1,2] sur un HMS-1000-2WB) : évite de
+            # pousser p3/p4 sur un micro qui n'a que deux entrées.
+            self.micro_ports = {}
+            for m in micros:
+                if not m.get("sn"):
+                    continue
+                ports = []
+                for p in (m.get("port_array") or []):
+                    try:
+                        ports.append(int(p))
+                    except (TypeError, ValueError):
+                        continue
+                self.micro_ports[m["sn"]] = sorted(ports) or [1, 2]
             log(f"Station {self.sid} — {len(self.micros)} micro(s): {self.micros}")
         else:
             self.micros = []
