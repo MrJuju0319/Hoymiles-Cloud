@@ -4,7 +4,9 @@ Le projet suit un workflow **bêta → stable** : les nouveautés arrivent sur l
 
 ---
 
-## 🧪 Version BÊTA — 0.1.10 (2026-10-12)
+## ✅ Version STABLE — 0.1.10 (2026-10-12)
+
+> **Validée en production le 12/10/2026** — Jeedom 4.6.1 / PHP 8.2 / Python 3.11 : backfill de 45 885 points d'historique importés (27/09 → 12/10), crons `cron5`/`cron15`/`cronDaily` actifs, 27 commandes historisées, commandes kWh alimentées, démon en service (~99 % d'uptime), rapport quotidien reçu.
 
 ### Correctifs (bugs silencieux constatés en production)
 
@@ -27,7 +29,8 @@ Le projet suit un workflow **bêta → stable** : les nouveautés arrivent sur l
 - **Multi-installations (comptes à plusieurs stations)** : le démon parcourt désormais **toutes les stations** du compte (avant : la première seulement) — utile pour un compte installateur ou plusieurs maisons. Nouveau réglage **« Stations en temps réel (burst) »** (3 par défaut) : au-delà, les stations restent suivies par les énergies (60 s) et les données électriques (5 min) pour ne pas marteler l'API. Le zeroing hors ligne est calculé **par station** (les micros d'une installation n'influent jamais sur une autre) et le rapport quotidien est envoyé **par station**.
 - **Plus aucune valeur propre à une installation** : le dossier temporaire est celui fourni par Jeedom (`tmp_dir`), l'URL interne vient du core (`network::getNetworkAccess` → gère les ports non standard et https au lieu de `127.0.0.1` en dur), et les fixtures de tests utilisent des identifiants fictifs.
 - **Internationalisation complète** : statuts de santé localisés (fr/en selon la langue de Jeedom) **+ nouvelle commande `status_code`** (0 normal, 1 avertissement, 2 alerte) pour des scénarios indépendants de la langue ; message du rapport quotidien traduit et nombres formatés selon la langue (4,08 en français / 4.08 en anglais).
-- **Tests + CI** : logique pure extraite dans `resources/hoymiles_logic.py` (zeroing hors ligne, statuts de santé, cadence, ports), 36 tests `pytest` couvrant également les parseurs protobuf (fixture générée, aucun réseau) et le filtre de push du démon, et workflow GitHub Actions (tests + `php -l`).
+- **Tests + CI** : logique pure extraite dans `resources/hoymiles_logic.py` (zeroing hors ligne, statuts de santé, cadence, ports), 45 tests `pytest` couvrant également les parseurs protobuf (fixture générée, aucun réseau), le filtre de push du démon et le multi-stations, et workflow GitHub Actions (tests + `php -l`).
+- **Icône aux dimensions du Market** : `plugin_info/hoymilescloud_icon.png` passe au gabarit officiel Jeedom **309 × 348 px** (documentation *Icône de plugin*) — logo officiel Hoymiles Cloud conservé, coins arrondis et bande basse transparentes, sans texte (au lieu du 256 × 256 précédent).
 - **Internationalisation** de la page de configuration (`core/i18n/en_US.json`) et libellés traduisibles partout.
 - **Progression des dépendances** : `install.sh` renseigne le fichier de progression attendu par Jeedom (la barre restait figée) et installe depuis `requirements.txt` épinglé.
 - **Documentation** : URLs du Market pointant sur la branche `stable` (l'ancienne branche `master` n'existe plus), limitations et champs de configuration mis à jour, note sur les crons.
