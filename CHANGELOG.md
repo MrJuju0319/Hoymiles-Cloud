@@ -4,6 +4,39 @@ Le projet suit un workflow **bêta → stable** : les nouveautés arrivent sur l
 
 ---
 
+## ✅ Version STABLE — 0.1.10 (2026-10-12)
+
+> **Validée en production le 12/10/2026** — Jeedom 4.6.1 / PHP 8.2 / Python 3.11 : backfill de 45 885 points d'historique importés (27/09 → 12/10), crons `cron5`/`cron15`/`cronDaily` actifs, 27 commandes historisées, commandes kWh alimentées, démon en service (~99 % d'uptime), rapport quotidien reçu.
+
+### Correctifs (bugs silencieux constatés en production)
+
+- **Backfill historique réparé** : `backfillHistory()` appelait `DB::escape()` puis `DB::prepare()->execute()` — **ces méthodes n'existent pas dans le core Jeedom**. En PHP 8 l'appel lève une `Error` (pas une `Exception`), donc le `catch (Exception)` ne l'attrapait pas : erreur fatale, aucun point ingéré. Passage par `DB::getConnection()->quote()` + `exec()`, capture des `\Throwable`, fichier conservé pour rejeu en cas d'échec, horodatage validé par regex.
+- **Crons du plugin enregistrés** : la table `cron` ne contenait **aucune ligne** `hoymilescloud` — `cron15()` (watchdog + ingestion du backfill) n'était donc **jamais appelé**. `plugin_info/install.php` enregistre désormais `cron5` (ingestion du backfill) et `cron15` (watchdog), et les supprime à la désinstallation. Corrigé aussi : le `require_once` d'un fichier inexistant (`core/php/install_jeedom.php`) provoquait une erreur fatale selon le contexte d'appel.
+- **Historisation réellement appliquée** : le code écrivait `setConfiguration('history', 1)`, une clé que le core ne lit **jamais** — la bonne API est `setIsHistorized()`. Résultat : aucune courbe pour les tensions, courants, fréquence, température et puissances par port (seules les commandes cochées à la main étaient historisées). Corrigé à la création + bouton **Réparer l'historisation** pour les équipements existants.
+- **`self_rate` alimenté par une seule source** : le burst poussait `power.pvr` (indicateur sans unité garantie) dans la commande *Autoconsommation (%)* toutes les 2 s, alors que le cloud y pousse un pourcentage toutes les 60 s → la commande oscillait entre deux unités.
+- **`deamon_changeAutoMode('enable')` démarre le démon** (l'ancien code l'arrêtait dans les deux cas, le démarrage attendait alors le cron du core).
+- **Vérification du PID du démon** : `posix_getsid()` seul pouvait valider un PID recyclé par un autre processus → démon déclaré « actif » alors qu'il était mort, jamais relancé. La ligne de commande est désormais contrôlée (`/proc/<pid>/cmdline`), et `deamon_stop()` ne tue plus un PID étranger.
+- **Un seul essai de login** en cas d'identifiants invalides (au lieu des 3 profils) : 3 échecs rapprochés déclenchent un cooldown cloud de 5 à 10 min.
+
+### Améliorations
+
+- **Ports dynamiques** : les micros 4 MPPT ne sont plus tronqués à leurs deux premiers ports (day_data) ; les commandes `p3/p4`, `up3/up4`, `ip3/ip4`, `e3/e4` ne sont créées que pour les ports réellement exposés (`port_array` du cloud).
+- **Récupérer l'historique en un clic** : nouveau bouton dans la configuration (15 jours max) — exécution en arrière-plan (récupération + ingestion automatique par le cron5), identifiants transmis par un fichier temporaire `0600` que le script supprime lui-même, jamais en ligne de commande.
+- **Journalisation maîtrisée** : le démon écrit lui-même son log (`WatchedFileHandler` : il se réattache après chaque rotation/chunk, fini le fichier creux rempli d'octets NUL de 7,9 Mo) ; niveau réglable (Normal / Détaillé / Réduit) ; les lignes de routine (`Slow poll OK`, `Day data OK`) passent en niveau détaillé.
+- **Réglages cohérents** : `burst_interval` est enfin appliqué (plancher du rythme burst) et `day_data_interval` est exposé dans la configuration.
+- **Énergies lisibles en kWh** : nouvelles commandes `today_kwh`, `month_kwh`, `year_kwh`, `total_kwh` sur la station (les commandes Wh existantes sont conservées pour les scénarios), poussées avec un seuil dédié de 0,01.
+- **Rapport quotidien de production** (`cronDaily`, 21 h, désactivable) : message Jeedom (texte brut, non échappé) avec la production du jour, la comparaison avec la veille, la moyenne des jours précédents, le pic de puissance avec son heure, l'autoconsommation et le détail par micro-onduleur (les totaux des jours passés viennent des compteurs d'énergie par port, historisés par le backfill). Rien n'est envoyé si aucune production n'a été mesurée.
+- **Multi-installations (comptes à plusieurs stations)** : le démon parcourt désormais **toutes les stations** du compte (avant : la première seulement) — utile pour un compte installateur ou plusieurs maisons. Nouveau réglage **« Stations en temps réel (burst) »** (3 par défaut) : au-delà, les stations restent suivies par les énergies (60 s) et les données électriques (5 min) pour ne pas marteler l'API. Le zeroing hors ligne est calculé **par station** (les micros d'une installation n'influent jamais sur une autre) et le rapport quotidien est envoyé **par station**.
+- **Plus aucune valeur propre à une installation** : le dossier temporaire est celui fourni par Jeedom (`tmp_dir`), l'URL interne vient du core (`network::getNetworkAccess` → gère les ports non standard et https au lieu de `127.0.0.1` en dur), et les fixtures de tests utilisent des identifiants fictifs.
+- **Internationalisation complète** : statuts de santé localisés (fr/en selon la langue de Jeedom) **+ nouvelle commande `status_code`** (0 normal, 1 avertissement, 2 alerte) pour des scénarios indépendants de la langue ; message du rapport quotidien traduit et nombres formatés selon la langue (4,08 en français / 4.08 en anglais).
+- **Tests + CI** : logique pure extraite dans `resources/hoymiles_logic.py` (zeroing hors ligne, statuts de santé, cadence, ports), 45 tests `pytest` couvrant également les parseurs protobuf (fixture générée, aucun réseau), le filtre de push du démon et le multi-stations, et workflow GitHub Actions (tests + `php -l`).
+- **Icône aux dimensions du Market** : `plugin_info/hoymilescloud_icon.png` passe au gabarit officiel Jeedom **309 × 348 px** (documentation *Icône de plugin*) — logo officiel Hoymiles Cloud conservé, coins arrondis et bande basse transparentes, sans texte (au lieu du 256 × 256 précédent).
+- **Internationalisation** de la page de configuration (`core/i18n/en_US.json`) et libellés traduisibles partout.
+- **Progression des dépendances** : `install.sh` renseigne le fichier de progression attendu par Jeedom (la barre restait figée) et installe depuis `requirements.txt` épinglé.
+- **Documentation** : URLs du Market pointant sur la branche `stable` (l'ancienne branche `master` n'existe plus), limitations et champs de configuration mis à jour, note sur les crons.
+
+---
+
 ## ✅ Version STABLE — 0.1.9 (2026-08-14, passée en stable le 12/10/2026)
 
 > ✔️ **Validée par Julien** — passée sur la branche `stable` le 12/10/2026.

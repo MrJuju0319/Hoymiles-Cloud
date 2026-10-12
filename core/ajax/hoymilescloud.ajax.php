@@ -36,7 +36,21 @@ try {
         ajax::success($result);
     }
 
+    if (init('action') == 'repairHistory') {
+        $result = hoymilescloud::repairHistory();
+        ajax::success($result);
+    }
+
+    if (init('action') == 'runBackfill') {
+        $result = hoymilescloud::runBackfill(init('days', 15));
+        ajax::success($result);
+    }
+
     throw new Exception(__('Aucune méthode correspondante', __FILE__));
 } catch (Exception $e) {
     ajax::error(displayException($e), $e->getCode());
+} catch (\Throwable $e) {
+    // Erreurs PHP (Error) : sans ce bloc, une méthode inexistante côté core
+    // renverrait une page blanche au lieu d'un message d'erreur exploitable.
+    ajax::error(displayException($e), 0);
 }

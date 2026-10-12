@@ -22,7 +22,7 @@ class hoymilescloud extends eqLogic
         $pid_file = jeedom::getTmpFolder(self::PLUGIN_ID) . '/daemon.pid';
         if (file_exists($pid_file)) {
             $pid = trim(file_get_contents($pid_file));
-            if (posix_getsid($pid) !== false) {
+            if (self::daemonPidAlive($pid)) {
                 $return['state'] = 'ok';
             } else {
                 shell_exec('rm -f ' . escapeshellarg($pid_file));
@@ -52,7 +52,11 @@ class hoymilescloud extends eqLogic
         $python = escapeshellarg($path . '/venv/bin/python3');
         $script = escapeshellarg($path . '/hoymiles_daemon.py');
         $config = escapeshellarg(jeedom::getTmpFolder(self::PLUGIN_ID) . '/config.json');
-        $logfile = escapeshellarg(log::getPathToLog('hoymilescloud_daemon'));
+        // Le démon écrit lui-même son log (WatchedFileHandler → il se réattache
+        // après chaque rotation/chunk Jeedom). La sortie standard part donc dans
+        // un log console séparé : plus de fichier creux rempli d'octets NUL et de
+        // lignes dupliquées dans le log principal.
+        $logfile = escapeshellarg(log::getPathToLog('hoymilescloud_console'));
         $cmd = 'nohup ' . $python . ' ' . $script
             . ' --config ' . $config
             . ' >> ' . $logfile . ' 2>&1 &';
@@ -79,13 +83,35 @@ class hoymilescloud extends eqLogic
         $pid_file = jeedom::getTmpFolder(self::PLUGIN_ID) . '/daemon.pid';
         if (file_exists($pid_file)) {
             $pid = trim(file_get_contents($pid_file));
-            if (posix_getsid($pid) !== false) {
-                posix_kill($pid, 15);
+            if (self::daemonPidAlive($pid)) {
+                posix_kill(intval($pid), 15);
             }
             shell_exec('rm -f ' . escapeshellarg($pid_file));
         }
         // kill de secours (pid file introuvable) — pattern ciblé, jamais de pkill large
         shell_exec('pkill -f "resources/hoymiles_daemon.py" 2>/dev/null');
+    }
+
+    /**
+     * Le PID du pid file correspond-il vraiment à NOTRE démon ?
+     *
+     * posix_getsid() seul est insuffisant : si le PID a été recyclé par un autre
+     * processus, posix_getsid() répond « vivant » alors que le démon est mort →
+     * le core (plugin::checkDeamon toutes les 5 min) ne le relance jamais et les
+     * données se figent silencieusement. On vérifie donc la ligne de commande.
+     * Utilisé aussi par deamon_stop() : on ne tue JAMAIS un PID étranger.
+     */
+    private static function daemonPidAlive($pid)
+    {
+        $pid = intval($pid);
+        if ($pid <= 0 || posix_getsid($pid) === false) {
+            return false;
+        }
+        $cmdline = @file_get_contents('/proc/' . $pid . '/cmdline');
+        if (!is_string($cmdline) || $cmdline === '') {
+            return false;  // /proc illisible → impossible de confirmer, on considère mort
+        }
+        return strpos($cmdline, 'hoymiles_daemon.py') !== false;
     }
 
     public static function getDaemonStatus()
@@ -130,7 +156,18 @@ class hoymilescloud extends eqLogic
 
     public static function deamon_changeAutoMode($mode)
     {
-        self::deamon_stop();
+        // Appelé par le core quand l'utilisateur active/désactive le mode
+        // automatique : 'enable' doit DÉMARRER le démon (l'ancien code l'arrêtait
+        // dans les deux cas, le démon attendait alors le cron du core ≤ 5 min).
+        if ($mode == 'enable') {
+            try {
+                self::deamon_start();
+            } catch (Exception $e) {
+                log::add(self::PLUGIN_ID, 'error', 'Démarrage automatique du démon impossible : ' . $e->getMessage());
+            }
+        } else {
+            self::deamon_stop();
+        }
     }
 
     /* ===================== Dépendances ===================== */
@@ -154,6 +191,183 @@ class hoymilescloud extends eqLogic
         );
     }
 
+    public static function cron5()
+    {
+        // Ingestion du backfill historique (fichier déposé par la page de
+        // configuration ou par resources/backfill.py). Sans ce cron — et sans
+        // l'enregistrement des crons dans plugin_info/install.php — la méthode
+        // n'est JAMAIS appelée et le backfill ne remonte pas dans Jeedom.
+        self::backfillHistory();
+    }
+
+    /**
+     * Rapport quotidien de production (cron, 21 h par défaut, désactivable).
+     *
+     * MULTI-INSTALLATIONS : un message par station du compte (plusieurs maisons,
+     * compte installateur). Rien n'est envoyé pour une station sans production
+     * mesurée (journée sans soleil, démon arrêté) — un message « 0 kWh »
+     * quotidien serait du bruit.
+     */
+    public static function cronDaily()
+    {
+        if (config::byKey('daily_report', self::PLUGIN_ID, 1) != 1) {
+            log::add(self::PLUGIN_ID, 'debug', 'Rapport quotidien désactivé (configuration)');
+            return 0;
+        }
+        $stations = array();
+        foreach (eqLogic::byType(self::PLUGIN_ID) as $eq) {
+            if (strpos($eq->getLogicalId(), 'station-') === 0) {
+                $stations[] = $eq;
+            }
+        }
+        $sent = 0;
+        foreach ($stations as $station) {
+            $msg = self::buildDailyReport($station, count($stations) > 1);
+            if ($msg !== null) {
+                message::add(self::PLUGIN_ID, $msg);
+                log::add(self::PLUGIN_ID, 'info', 'Rapport quotidien envoyé — ' . $station->getName());
+                $sent++;
+            }
+        }
+        return $sent;
+    }
+
+    /**
+     * Construit le message du jour pour UNE station (null si rien à signaler).
+     *
+     * Exploite l'historique Jeedom (fiable depuis la correction du backfill) :
+     * production du jour, comparaison veille + moyenne des jours précédents,
+     * pic de puissance avec son heure, autoconsommation et détail par
+     * micro-onduleur de cette station. Libellés traduits (core/i18n/fr_FR ·
+     * en_US) et nombres formatés selon la langue de l'interface.
+     */
+    public static function buildDailyReport($station, $showStationName = false)
+    {
+        $db = DB::getConnection();
+        $cmdToday = $station->getCmd(null, 'today_eq');
+        $cmdPower = $station->getCmd(null, 'real_power');
+        $cmdSelf = $station->getCmd(null, 'self_rate');
+
+        $todayWh = is_object($cmdToday) ? floatval($cmdToday->getCache('value', 0)) : 0;
+        if ($todayWh <= 0 && is_object($cmdToday)) {
+            // Repli sur l'historique si le cache n'est pas encore alimenté
+            $todayWh = floatval($db->query('SELECT value FROM history WHERE cmd_id = ' . intval($cmdToday->getId()) . ' ORDER BY datetime DESC LIMIT 1')->fetchColumn());
+        }
+        if ($todayWh <= 0) {
+            log::add(self::PLUGIN_ID, 'info', "Rapport quotidien : aucune production mesurée aujourd'hui (" . $station->getName() . ") — pas d'envoi");
+            return null;
+        }
+
+        // Micros de CETTE station uniquement (configuration['sid'] posée par la
+        // synchronisation) : sur un compte multi-sites, les micros d'une autre
+        // installation ne doivent pas être comptés ici.
+        $sid = str_replace('station-', '', $station->getLogicalId());
+        $microEqs = array();
+        foreach (eqLogic::byType(self::PLUGIN_ID) as $eq) {
+            if (strpos($eq->getLogicalId(), 'micro-') !== 0) {
+                continue;
+            }
+            if ($eq->getConfiguration('sid', '') == $sid) {
+                $microEqs[] = $eq;
+            }
+        }
+
+        // Totaux des jours précédents : les compteurs d'énergie PAR PORT (e1,
+        // e2…) sont historisés et reconstitués par le backfill — les compteurs
+        // de la station (today_eq) ne le sont que depuis la mise en service.
+        // MAX() par jour et par port = énergie du jour du port (le compteur
+        // repart de zéro à minuit), sommée sur les ports et les micros.
+        $ids = array();
+        foreach ($microEqs as $eq) {
+            foreach ($eq->getCmd() as $cmd) {
+                if (preg_match('/^e\d+$/', $cmd->getLogicalId())) {
+                    $ids[] = intval($cmd->getId());
+                }
+            }
+        }
+        $hist = array();
+        if ($ids) {
+            $sql = 'SELECT DATE(datetime) AS j, cmd_id, MAX(CAST(value AS DECIMAL(20,4))) AS v FROM history'
+                . ' WHERE cmd_id IN (' . implode(',', $ids) . ')'
+                . ' AND datetime >= DATE_SUB(CURDATE(), INTERVAL 8 DAY) AND DATE(datetime) < CURDATE()'
+                . ' GROUP BY DATE(datetime), cmd_id';
+            foreach ($db->query($sql)->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                // Cumul par jour (plusieurs ports par micro)
+                $hist[$r['j']] = (isset($hist[$r['j']]) ? $hist[$r['j']] : 0) + floatval($r['v']);
+            }
+            krsort($hist);
+        }
+        $yesterday = $hist ? reset($hist) : null;
+        $avg = $hist ? array_sum($hist) / count($hist) : null;
+
+        // Pic de puissance du jour
+        $peak = null;
+        if (is_object($cmdPower)) {
+            $sql = 'SELECT value, datetime FROM history WHERE cmd_id = ' . intval($cmdPower->getId())
+                . ' AND datetime >= CURDATE() ORDER BY CAST(value AS DECIMAL(20,4)) DESC LIMIT 1';
+            $r = $db->query($sql)->fetch(PDO::FETCH_ASSOC);
+            if ($r && $r['value'] !== null) {
+                $peak = array('value' => floatval($r['value']), 'time' => date('H:i', strtotime($r['datetime'])));
+            }
+        }
+
+        // Détail par micro : somme des énergies par port du jour (e1, e2…)
+        $micros = array();
+        foreach ($microEqs as $eq) {
+            $wh = 0;
+            foreach ($eq->getCmd() as $cmd) {
+                if (preg_match('/^e\d+$/', $cmd->getLogicalId())) {
+                    $wh += floatval($cmd->getCache('value', 0));
+                }
+            }
+            if ($wh > 0) {
+                $micros[] = $eq->getName() . ' ' . self::num($wh / 1000) . ' kWh';
+            }
+        }
+
+        // Message en TEXTE BRUT (message::add échappe le HTML : des balises
+        // <br> s'afficheraient littéralement dans le centre de messages).
+        $msg = '☀️ ';
+        if ($showStationName) {
+            // Compte multi-sites : identifier la station dans le message
+            $msg .= $station->getName() . ' — ';
+        }
+        $msg .= __('Production solaire du jour', __FILE__) . ' : ' . self::num($todayWh / 1000) . ' kWh';
+        $details = array();
+        if ($yesterday !== null && $yesterday > 0) {
+            $delta = round(($todayWh - $yesterday) / $yesterday * 100);
+            $details[] = sprintf(__('Hier %s kWh (%s %%)', __FILE__), self::num($yesterday / 1000), ($delta >= 0 ? '+' : '') . $delta);
+        }
+        if ($avg !== null) {
+            $details[] = sprintf(__('Moyenne %s jours : %s kWh', __FILE__), count($hist), self::num($avg / 1000));
+        }
+        if ($peak !== null) {
+            $details[] = sprintf(__('Pic %s W à %s', __FILE__), round($peak['value']), $peak['time']);
+        }
+        if (is_object($cmdSelf) && $cmdSelf->getCache('value', null) !== null) {
+            $details[] = sprintf(__('Autoconso %s %%', __FILE__), round(floatval($cmdSelf->getCache('value', 0))));
+        }
+        if ($micros) {
+            $details[] = implode(' · ', $micros);
+        }
+        if ($details) {
+            $msg .= ' · ' . implode(' · ', $details);
+        }
+        return $msg;
+    }
+
+    /**
+     * Nombre formaté selon la langue de l'interface (4,08 en français, 4.08 en
+     * anglais) — un séparateur français dans une interface anglaise est un
+     * détail qui trahit un plugin non internationalisé.
+     */
+    private static function num($value, $decimals = 2)
+    {
+        $lang = strtolower(strval(config::byKey('language', 'core', 'fr_FR')));
+        $dec = (strpos($lang, 'en') === 0) ? '.' : ',';
+        return number_format(floatval($value), intval($decimals), $dec, ' ');
+    }
+
     public static function cron15()
     {
         // Vérification périodique que le démon tourne
@@ -165,8 +379,8 @@ class hoymilescloud extends eqLogic
             log::add(self::PLUGIN_ID, 'warning', 'Démon arrêté — redémarrage auto');
             self::deamon_start();
         }
-        // Backfill historique : si le daemon/script a déposé un backfill.json
-        // dans le tmp du plugin, on l'ingère (REPLACE INTO — zéro doublon).
+        // Filet de sécurité : si le cron5 n'est pas actif (plugin mis à jour
+        // depuis une version antérieure), l'ingestion passe ici (idempotente).
         self::backfillHistory();
     }
 
@@ -185,8 +399,9 @@ class hoymilescloud extends eqLogic
         }
         $data = json_decode(file_get_contents($file), true);
         if (!is_array($data) || !$data) {
-            @unlink($file);
-            log::add(self::PLUGIN_ID, 'warning', 'backfill.json illisible ou vide — ignoré et supprimé');
+            // Fichier illisible : on l'écarte sans le perdre (diagnostic possible).
+            @rename($file, $file . '.bad');
+            log::add(self::PLUGIN_ID, 'warning', 'backfill.json illisible ou vide — renommé en backfill.json.bad');
             return;
         }
         $total = 0;
@@ -210,11 +425,21 @@ class hoymilescloud extends eqLogic
                             if (!is_array($pt) || count($pt) < 2 || $pt[1] === null) {
                                 continue;
                             }
-                            $values[] = '(' . intval($cid) . ", '" . $pt[0] . "', '" . DB::escape($pt[1]) . "')";
+                            // Horodatage strictement contrôlé (jamais de valeur
+                            // brute injectée dans le SQL) : Y-m-d H:i:s.
+                            if (!preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', (string) $pt[0])) {
+                                continue;
+                            }
+                            // ⚠️ DB::escape()/DB::prepare() n'existent pas dans le
+                            // core Jeedom → erreur fatale silencieuse (Error, non
+                            // attrapé par catch(Exception)). On passe par la
+                            // connexion DBAL : quote() + exec().
+                            $values[] = '(' . intval($cid) . ", '" . $pt[0] . "', "
+                                . DB::getConnection()->quote($pt[1]) . ')';
                         }
                         if ($values) {
                             $sql = 'REPLACE INTO history (cmd_id, `datetime`, value) VALUES ' . implode(',', $values);
-                            DB::prepare($sql)->execute();
+                            DB::getConnection()->exec($sql);
                             $total += count($values);
                         }
                     }
@@ -223,9 +448,117 @@ class hoymilescloud extends eqLogic
             }
             @unlink($file);
             log::add(self::PLUGIN_ID, 'info', "Backfill historique : $total point(s) ingéré(s) sur $eqCount équipement(s) — fichier supprimé");
-        } catch (Exception $e) {
-            log::add(self::PLUGIN_ID, 'error', 'Backfill historique échoué : ' . $e->getMessage());
+        } catch (\Throwable $e) {
+            // \Throwable (et non Exception) : les erreurs PHP 7+ (méthode
+            // inexistante, type error…) ne sont pas des Exception.
+            // Le fichier est CONSERVÉ : il sera rejoué au prochain cron.
+            log::add(self::PLUGIN_ID, 'error', 'Backfill historique échoué (fichier conservé pour rejeu) : ' . $e->getMessage());
         }
+    }
+
+    /**
+     * Réparation de l'historisation : les versions ≤ 0.1.9 écrivaient une clé de
+     * configuration `history` (jamais lue par le core) au lieu d'appeler
+     * setIsHistorized() → aucune courbe pour les tensions/courants/Hz/température
+     * et les puissances par port. Action explicite (jamais automatique) pour ne
+     * pas écraser un choix utilisateur.
+     */
+    public static function repairHistory()
+    {
+        $fixed = 0;
+        foreach (eqLogic::byType(self::PLUGIN_ID) as $eq) {
+            foreach ($eq->getCmd() as $cmd) {
+                $lid = $cmd->getLogicalId();
+                if ($cmd->getType() != 'info' || $cmd->getSubType() != 'numeric') {
+                    continue;
+                }
+                // Compteurs d'énergie par port : jamais historisés (ils ne
+                // repartent pas de zéro, la courbe est un escalier inutile).
+                if (preg_match('/^e\d+$/', $lid)) {
+                    continue;
+                }
+                if ($cmd->getIsHistorized() == 1) {
+                    continue;
+                }
+                $cmd->setIsHistorized(1);
+                $cmd->save();
+                $fixed++;
+            }
+        }
+        log::add(self::PLUGIN_ID, 'info', "Réparation de l'historisation : $fixed commande(s) passée(s) en historisée");
+        return array('ok' => true, 'message' => $fixed . ' commande(s) désormais historisée(s)');
+    }
+
+    /**
+     * Backfill « un clic » : exécute resources/backfill.py (venv du plugin) sur
+     * les N derniers jours (15 max — limite de l'API cloud) puis ingère le JSON
+     * dans l'historique Jeedom. Les identifiants ne passent jamais en ligne de
+     * commande (visibles dans `ps`) : ils sont écrits dans un fichier 0600 du
+     * tmp du plugin, supprimé immédiatement après l'exécution.
+     */
+    public static function runBackfill($days = 15)
+    {
+        $days = max(1, min(intval($days), 15));
+        $path = realpath(dirname(__FILE__) . '/../../resources');
+        $python = $path . '/venv/bin/python3';
+        if (!file_exists($python)) {
+            throw new Exception(__('Dépendances Python absentes — cliquez d\'abord sur « Relancer les dépendances »', __FILE__));
+        }
+        $user = config::byKey('user', self::PLUGIN_ID, '');
+        $pass = config::byKey('password', self::PLUGIN_ID, '');
+        if ($user == '' || $pass == '') {
+            throw new Exception(__('Identifiants S-Miles manquants dans la configuration du plugin', __FILE__));
+        }
+        $tmp = jeedom::getTmpFolder(self::PLUGIN_ID);
+        if (!file_exists($tmp)) {
+            mkdir($tmp, 0750, true);
+        }
+        $sid = '';
+        foreach (eqLogic::byType(self::PLUGIN_ID) as $eq) {
+            if (strpos($eq->getLogicalId(), 'station-') === 0) {
+                $sid = str_replace('station-', '', $eq->getLogicalId());
+                break;
+            }
+        }
+        $auth_file = $tmp . '/backfill_auth.json';
+        $out_file = $tmp . '/backfill.json';
+        @unlink($out_file);  // évite d'ingérer un fichier précédent
+        file_put_contents($auth_file, json_encode(array(
+            'user' => $user, 'password' => $pass, 'sid' => $sid,
+            'days' => $days, 'out' => $out_file,
+        )));
+        chmod($auth_file, 0600);
+        // Exécution en arrière-plan : récupérer 15 jours demande une quinzaine
+        // d'appels API et peut dépasser le délai d'exécution d'une requête AJAX.
+        // Le script supprime lui-même le fichier d'authentification (0600) dès
+        // qu'il l'a lu. Le fichier produit est ingéré par le cron5 (≤ 5 min) ou
+        // immédiatement s'il est déjà prêt.
+        $log = log::getPathToLog('hoymilescloud_backfill');
+        exec('nohup ' . escapeshellarg($python) . ' ' . escapeshellarg($path . '/backfill.py')
+            . ' --config ' . escapeshellarg($auth_file)
+            . ' >> ' . escapeshellarg($log) . ' 2>&1 &');
+        // Attente courte (≤ 20 s) pour rendre le résultat quand c'est possible
+        for ($i = 0; $i < 20; $i++) {
+            if (file_exists($out_file)) {
+                break;
+            }
+            sleep(1);
+        }
+        if (!file_exists($out_file)) {
+            log::add(self::PLUGIN_ID, 'info', 'Backfill lancé en arrière-plan — ingestion par le cron5');
+            return array('ok' => true, 'message' => 'Récupération lancée en arrière-plan (' . $days . ' jours). Les points seront ingérés automatiquement dans les 5 minutes (cron5) — voir le log hoymilescloud_backfill en cas de doute.');
+        }
+        $points = 0;
+        $decoded = json_decode(file_get_contents($out_file), true);
+        if (is_array($decoded)) {
+            foreach ($decoded as $cmds) {
+                foreach ($cmds as $pts) {
+                    $points += count($pts);
+                }
+            }
+        }
+        self::backfillHistory();
+        return array('ok' => true, 'message' => $points . ' point(s) récupéré(s) puis ingéré(s) dans l\'historique (' . $days . ' jours)');
     }
 
     /* ===================== Config runtime ===================== */
@@ -253,12 +586,24 @@ class hoymilescloud extends eqLogic
             'password' => $pass,
             'profile' => config::byKey('profile', self::PLUGIN_ID, 'auto'),
             'burst_interval' => intval(config::byKey('burst_interval', self::PLUGIN_ID, 2)),
+            'burst_max_stations' => max(1, intval(config::byKey('burst_max_stations', self::PLUGIN_ID, 3))),
             'delta_threshold' => floatval(config::byKey('delta_threshold', self::PLUGIN_ID, 1)),
             'slow_interval' => intval(config::byKey('slow_interval', self::PLUGIN_ID, 60)),
-            'jeedom_url' => 'http://127.0.0.1',
+            'day_data_interval' => max(300, intval(config::byKey('day_data_interval', self::PLUGIN_ID, 300))),
+            'log_level' => config::byKey('log_level', self::PLUGIN_ID, 'info'),
+            // Langue de l'interface : les statuts/messages poussés par le démon
+            // sont traduits (fr/en) et accompagnés d'un code numérique stable.
+            'language' => config::byKey('language', 'core', 'fr_FR'),
+            // URL interne de Jeedom telle que le core la connaît (gère les ports
+            // non standard et https) — plus de 127.0.0.1 en dur.
+            'jeedom_url' => self::internalUrl(),
+            // Dossier temporaire réel du plugin (certains hôtes le déplacent) :
+            // le démon y écrit son pid et status.json.
+            'tmp_dir' => jeedom::getTmpFolder(self::PLUGIN_ID),
             'jeedom_root' => realpath(dirname(__FILE__) . '/../../../..'),
             'apikey' => jeedom::getApiKey(self::PLUGIN_ID),
             'log' => log::getPathToLog('hoymilescloud_daemon'),
+            'log_console' => log::getPathToLog('hoymilescloud_console'),
             'mapping' => $mapping,
         );
         $dir = jeedom::getTmpFolder(self::PLUGIN_ID);
@@ -268,6 +613,27 @@ class hoymilescloud extends eqLogic
         file_put_contents($dir . '/config.json', json_encode($config));
         chmod($dir . '/config.json', 0600);  // restreint au seul user www-data
         log::add(self::PLUGIN_ID, 'debug', 'Config runtime générée (' . count($mapping) . ' équipement(s) mappé(s))');
+    }
+
+    /**
+     * URL interne de Jeedom (celle que le core utilise pour ses appels locaux) :
+     * gère les ports non standard et https. Repli sur 127.0.0.1 si le core ne
+     * fournit rien — jamais de valeur en dur dans le démon.
+     */
+    public static function internalUrl()
+    {
+        $url = '';
+        try {
+            if (class_exists('network')) {
+                $url = network::getNetworkAccess('internal');
+            }
+        } catch (\Throwable $e) {
+            $url = '';
+        }
+        if (!is_string($url) || $url == '') {
+            $url = 'http://127.0.0.1';
+        }
+        return rtrim($url, '/');
     }
 
     /* ===================== Sync cloud (AJAX) ===================== */
@@ -322,10 +688,12 @@ class hoymilescloud extends eqLogic
             foreach ($micros as $micro) {
                 $sn = $micro['sn'];
                 $model = isset($micro['model_no']) && $micro['model_no'] != '' ? $micro['model_no'] : 'HMS';
+                $ports = isset($micro['ports']) && is_array($micro['ports']) && $micro['ports'] ? $micro['ports'] : array(1, 2);
                 $eqMicro = self::getOrCreateEqLogic('micro-' . $sn, $model . ' (' . $sn . ')', 'Micro-onduleur');
-                self::createMicroCommands($eqMicro);
+                self::createMicroCommands($eqMicro, $ports);
                 $eqMicro->setConfiguration('sn', $sn);
                 $eqMicro->setConfiguration('sid', $sid);
+                $eqMicro->setConfiguration('ports', implode(',', $ports));
                 $eqMicro->save();
                 $created++;
             }
@@ -356,7 +724,7 @@ class hoymilescloud extends eqLogic
         return $eq;
     }
 
-    private static function createCommand($eqLogic, $logicalId, $name, $type, $subtype, $unite = '', $template = '')
+    private static function createCommand($eqLogic, $logicalId, $name, $type, $subtype, $unite = '', $template = '', $historize = true)
     {
         $cmd = $eqLogic->getCmd(null, $logicalId);
         $isNew = false;
@@ -370,6 +738,13 @@ class hoymilescloud extends eqLogic
         // Nom uniquement à la création : préserve les noms personnalisés.
         if ($isNew) {
             $cmd->setName($name);
+            // Historisation : la colonne Jeedom est `isHistorized` (API
+            // setIsHistorized). L'ancien code écrivait une clé de configuration
+            // `history`, que le core ne lit JAMAIS → aucune courbe n'était créée
+            // pour les tensions/courants/températures/puissances par port.
+            // Appliqué uniquement à la création pour respecter un choix
+            // utilisateur ultérieur (case décochée à la main).
+            $cmd->setIsHistorized(($type == 'info' && $subtype == 'numeric' && $historize) ? 1 : 0);
         }
         $cmd->setType($type);
         $cmd->setSubType($subtype);
@@ -378,7 +753,6 @@ class hoymilescloud extends eqLogic
             $cmd->setTemplate('dashboard', $template);
             $cmd->setTemplate('mobile', $template);
         }
-        $cmd->setConfiguration('history', $type == 'info' && $subtype == 'numeric' ? 1 : 0);
         $cmd->save();
         return $cmd;
     }
@@ -392,6 +766,12 @@ class hoymilescloud extends eqLogic
         self::createCommand($eq, 'month_eq', 'Production mois', 'info', 'numeric', 'Wh');
         self::createCommand($eq, 'year_eq', 'Production année', 'info', 'numeric', 'Wh');
         self::createCommand($eq, 'total_eq', 'Production totale', 'info', 'numeric', 'Wh');
+        // Équivalents lisibles en kWh (mêmes sources, simple conversion) : les
+        // commandes Wh sont conservées telles quelles (compatibilité scénarios).
+        self::createCommand($eq, 'today_kwh', 'Production jour (kWh)', 'info', 'numeric', 'kWh');
+        self::createCommand($eq, 'month_kwh', 'Production mois (kWh)', 'info', 'numeric', 'kWh', '', false);
+        self::createCommand($eq, 'year_kwh', 'Production année (kWh)', 'info', 'numeric', 'kWh', '', false);
+        self::createCommand($eq, 'total_kwh', 'Production totale (kWh)', 'info', 'numeric', 'kWh', '', false);
         self::createCommand($eq, 'self_rate', 'Autoconsommation', 'info', 'numeric', '%');
         self::createCommand($eq, 'co2', 'CO2 évité', 'info', 'numeric', 'g');
         self::createCommand($eq, 'last_data_time', 'Dernière donnée', 'info', 'string');
@@ -399,29 +779,36 @@ class hoymilescloud extends eqLogic
         self::createCommand($eq, 'daemon', 'Démon OK', 'info', 'binary', '', 'state');
     }
 
-    private static function createMicroCommands($eq)
+    private static function createMicroCommands($eq, $ports = array(1, 2))
     {
         self::createCommand($eq, 'pac', 'Puissance AC', 'info', 'numeric', 'W', 'power');
-        self::createCommand($eq, 'p1', 'PV1', 'info', 'numeric', 'W');
-        self::createCommand($eq, 'p2', 'PV2', 'info', 'numeric', 'W');
-        self::createCommand($eq, 'p3', 'PV3', 'info', 'numeric', 'W');
-        self::createCommand($eq, 'p4', 'PV4', 'info', 'numeric', 'W');
-        self::createCommand($eq, 'up1', 'Tension PV1', 'info', 'numeric', 'V', 'voltage');
-        self::createCommand($eq, 'up2', 'Tension PV2', 'info', 'numeric', 'V', 'voltage');
-        self::createCommand($eq, 'ip1', 'Courant PV1', 'info', 'numeric', 'A', 'current');
-        self::createCommand($eq, 'ip2', 'Courant PV2', 'info', 'numeric', 'A', 'current');
-        self::createCommand($eq, 'e1', 'Énergie PV1 (jour)', 'info', 'numeric', 'Wh');
-        self::createCommand($eq, 'e2', 'Énergie PV2 (jour)', 'info', 'numeric', 'Wh');
         self::createCommand($eq, 'uac', 'Tension réseau', 'info', 'numeric', 'V', 'voltage');
         self::createCommand($eq, 'freq', 'Fréquence réseau', 'info', 'numeric', 'Hz');
         self::createCommand($eq, 'temp', 'Température micro', 'info', 'numeric', '°C', 'temperature');
+        // Ports réellement exposés par le micro (2 MPPT sur un HMS-1000-2WB,
+        // 4 sur un HMS-1600/2000-4WB) : plus de p3/p4 fantômes sur les micros
+        // 2 ports, et les micros 4 ports sont désormais couverts.
+        $ports = array_values(array_unique(array_map('intval', (array) $ports)));
+        sort($ports);
+        if (!$ports) {
+            $ports = array(1, 2);
+        }
+        foreach ($ports as $p) {
+            self::createCommand($eq, 'p' . $p, 'PV' . $p, 'info', 'numeric', 'W');
+            self::createCommand($eq, 'up' . $p, 'Tension PV' . $p, 'info', 'numeric', 'V', 'voltage');
+            self::createCommand($eq, 'ip' . $p, 'Courant PV' . $p, 'info', 'numeric', 'A', 'current');
+            // Énergie cumulée du jour par port : compteur (jamais remis à zéro),
+            // non historisée — la courbe serait un escalier sans intérêt.
+            self::createCommand($eq, 'e' . $p, 'Énergie PV' . $p . ' (jour)', 'info', 'numeric', 'Wh', '', false);
+        }
         self::createCommand($eq, 'warn', 'Alerte', 'info', 'binary');
         self::createCommand($eq, 'connect', 'Connecté', 'info', 'binary', '', 'state');
         self::createCommand($eq, 'soft_ver', 'Firmware', 'info', 'string');
-        // Santé du micro (v0.1.7) : 2 commandes info poussées par le démon —
-        // "Normal" / "Warning" / "Alerte" + message d'erreur lisible.
-        // Le push jeeApi (type=cmd) lève l'événement Jeedom → déclenche les scénarios.
+        // Statut de santé : libellé localisé (fr/en selon la langue de Jeedom)
+        // ET code numérique stable (0 normal, 1 avertissement, 2 alerte) — les
+        // scénarios doivent utiliser le code, insensible à la traduction.
         self::createCommand($eq, 'status', 'Statut', 'info', 'string');
+        self::createCommand($eq, 'status_code', 'Statut (code)', 'info', 'numeric');
         self::createCommand($eq, 'alarm_msg', 'Message d\'erreur', 'info', 'string');
     }
 }
@@ -497,6 +884,7 @@ class HoymilesCloudApi
     {
         // 1) v3 home (euapi + UA sma/ad) — profil confirmé pour les comptes S-Miles Home
         $profiles = array('home', 'installer', 'web');
+        $lastMessage = 'inconnu';
         foreach ($profiles as $profile) {
             $base = self::PROFILES[$profile]['base'];
             $pre = $this->post($base . '/iam/pub/3/auth/pre-insp', array('u' => $this->user), $profile);
@@ -519,6 +907,14 @@ class HoymilesCloudApi
                     $this->token = $resp['data']['token'];
                     return array('ok' => true, 'method' => 'v3/' . $profile);
                 }
+                $lastMessage = isset($resp['message']) ? $resp['message'] : 'inconnu';
+                // Identifiants refusés : inutile de retenter les 3 profils.
+                // 3 échecs de login rapprochés depuis la même IP = cooldown
+                // cloud de 5 à 10 min (« Login failed »), ce qui laisserait le
+                // plugin sans données jusqu'à expiration.
+                if (preg_match('/login failed|password|identifiant|account can only/i', $lastMessage)) {
+                    return array('ok' => false, 'message' => $lastMessage);
+                }
             }
         }
         // 2) fallback v0 (md5)
@@ -528,7 +924,7 @@ class HoymilesCloudApi
             $this->token = $resp['data']['token'];
             return array('ok' => true, 'method' => 'v0');
         }
-        return array('ok' => false, 'message' => isset($resp['message']) ? $resp['message'] : 'inconnu');
+        return array('ok' => false, 'message' => isset($resp['message']) ? $resp['message'] : $lastMessage);
     }
 
     public function getStations()
@@ -548,7 +944,20 @@ class HoymilesCloudApi
         $list = isset($resp['data']['list']) ? $resp['data']['list'] : array();
         $out = array();
         foreach ($list as $m) {
-            $out[] = array('sn' => $m['sn'], 'model_no' => isset($m['model_no']) ? $m['model_no'] : '');
+            // port_array (ex. [1,2] sur un HMS-1000-2WB, [1,2,3,4] sur un 4 MPPT) :
+            // sert à ne créer que les commandes réellement exploitables.
+            $ports = array();
+            if (isset($m['port_array']) && is_array($m['port_array'])) {
+                $ports = array_values(array_filter(array_map('intval', $m['port_array'])));
+            }
+            if (!$ports) {
+                $ports = array(1, 2);
+            }
+            $out[] = array(
+                'sn' => $m['sn'],
+                'model_no' => isset($m['model_no']) ? $m['model_no'] : '',
+                'ports' => $ports,
+            );
         }
         return $out;
     }

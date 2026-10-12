@@ -11,10 +11,13 @@
 | | |
 |---|---|
 | ⚡ **Temps réel** | Puissance station + par micro, burst ~2-3 s (mêmes endpoints que l'app) |
-| 📊 **Énergies** | Production jour / mois / **année** / totale, autoconsommation, CO₂ évité |
+| 📊 **Énergies** | Production jour / mois / **année** / totale, en Wh **et kWh**, autoconsommation, CO₂ évité |
 | 🔌 **Électrique** | **Tensions PV par port** (V), **courants PV** (A), **tension réseau** (V), **fréquence** (Hz), **température du micro** (°C) |
 | 🚨 **Alertes** | État connecté + alerte anomalie par micro |
 | 🤖 **Automatique** | Synchronisation cloud en 1 clic (station + tous les micros), démon auto-surveillé |
+| 🏠 **Multi-installations** | **Toutes les stations du compte** (plusieurs maisons, compte installateur), avec un réglage de protection de l'API |
+| 📅 **Rapport quotidien** | Message Jeedom à 21 h : production du jour, comparaison veille, pic de puissance, détail par micro |
+| 🕘 **Historique 15 jours** | Import en un clic des 15 derniers jours de mesures depuis le cloud |
 | 🧠 **Push intelligent** | Seuil de changement configurable : l'historique Jeedom n'est pas noyé |
 | 🔒 **Sécurisé** | Identifiants stockés chiffrés par Jeedom, jamais en dur, ne quittent pas le serveur |
 | 🌍 **Multi-langue** | Français, English |
@@ -67,7 +70,15 @@ git clone -b stable https://github.com/MrJuju0319/Hoymiles-Cloud.git hoymilesclo
 |---|---|
 | **Email S-Miles** | Identifiant de votre compte S-Miles (adresse email) |
 | **Mot de passe** | Mot de passe du compte S-Miles (chiffré par Jeedom) |
+| **Intervalle minimum burst** | Plancher (s) entre deux mesures temps réel — `2` par défaut ; le serveur S-Miles impose de toute façon son propre rythme (1,5 à 3 s) |
 | **Seuil de changement** | Différence minimale (W, Wh, %, …) pour pousser une valeur vers Jeedom — `1` par défaut |
+| **Polling énergies** | Intervalle (s) des énergies/statut/heartbeat — `60` par défaut |
+| **Données électriques** | Intervalle (s) des tensions/courants/fréquence/température — `300` par défaut (minimum 300) |
+| **Niveau de log du démon** | Normal / Détaillé (diagnostic) / Réduit (erreurs seulement) |
+| **Rapport quotidien** | Message Jeedom à 21 h (production du jour, comparaison veille, pic, détail par micro) — `Oui` par défaut |
+| **Stations en temps réel (burst)** | Nombre de stations suivies en temps réel (3 par défaut) — au-delà, les stations restent suivies par les énergies (60 s) et les données électriques (5 min) : utile sur un compte multi-sites ou installateur |
+| **Maintenance → Réparer l'historisation** | Coche la case *Historiser* des commandes numériques (utile si les courbes sont vides) |
+| **Maintenance → Récupérer l'historique** | Importe les 15 derniers jours de mesures par micro depuis le cloud (exécution en arrière-plan, ingestion automatique) |
 
 ### Étapes pas à pas
 
@@ -83,7 +94,7 @@ graph LR
 2. Cliquer **Tester la connexion** → toast vert *« Connecté (v3/home). N station(s) trouvée(s) : … »*
 3. Cliquer **Synchroniser** → création automatique :
    - la **Station** (nom = nom de la station dans S-Miles, ex. « Mon domicile »)
-   - un **équipement par micro-onduleur** (ex. « HMS-1000-2WB (1610A38B350B) »)
+   - un **équipement par micro-onduleur** (ex. « HMS-1000-2WB (SN1234567890) »)
 4. **Démarrer le démon** → les valeurs sont poussées en continu
 
 > 🎨 **Personnalisation libre** : renommez équipements et commandes comme vous voulez (« Balcon Sud », « Garage »…) — **la synchronisation ne re-renomme jamais** ce que vous avez personnalisé (les noms cloud ne sont appliqués qu'à la création).
@@ -101,7 +112,9 @@ graph LR
 | `month_eq` | Production mois | Wh | 60 s | Énergie du mois |
 | `year_eq` | Production année | Wh | 60 s | Énergie de l'année en cours |
 | `total_eq` | Production totale | Wh | 60 s | Énergie cumulée |
-| `self_rate` | Autoconsommation | % | burst + 60 s | Taux d'autoconsommation |
+| `self_rate` | Autoconsommation | % | 60 s | Taux d'autoconsommation |
+| `today_kwh` | Production jour (kWh) | kWh | 60 s | Équivalent lisible de `today_eq` (historizé) |
+| `month_kwh` / `year_kwh` / `total_kwh` | Production mois / année / totale | kWh | 60 s | Équivalents lisibles (non historisés : compteurs cumulés) |
 | `co2` | CO₂ évité | g | 60 s | Émissions évitées |
 | `online` | En ligne | binaire | 60 s | 1 si la station répond |
 | `daemon` | Démon OK | binaire | 60 s (forcé) | **Heartbeat** du démon — mis à jour toutes les 60 s ; utilisez-le dans un scénario pour alerter si les données ne se rafraîchissent plus |
@@ -119,7 +132,8 @@ graph LR
 | `uac` | Tension réseau | V | 5 min | Tension AC |
 | `freq` | Fréquence réseau | Hz | 5 min | Fréquence AC |
 | `temp` | Température micro | °C | 5 min | Température interne du boîtier |
-| `status` | **Statut** | texte | 60 s | **`Normal` / `Warning` / `Alerte`** — santé du micro (déclenche les scénarios) |
+| `status` | **Statut** | texte | 60 s | **`Normal` / `Warning` / `Alerte`** (traduit selon la langue de Jeedom : `Alert` en anglais) — santé du micro |
+| `status_code` | **Statut (code)** | numérique | 60 s | **0** normal · **1** avertissement · **2** alerte — à utiliser dans les scénarios : insensible à la langue et à un futur changement de libellé |
 | `alarm_msg` | **Message d'erreur** | texte | 60 s | Détail de l'alarme (« Surtension réseau », « Sur-température »…) — `OK` si Normal |
 | `warn` | Alerte | binaire | 60 s | 1 si le micro signale une anomalie |
 | `connect` | Connecté | binaire | burst | 1 si le micro répond au burst |
@@ -186,7 +200,7 @@ Le démon tourne en **4 threads** : 3 collecteurs indépendants (burst, slow, da
 - **3 échecs de burst** → repli automatique sur le polling seul (mode dégradé) + backoff exponentiel
 - **Rate-limit silencieux** de `count_station_real_data` (réponses vides temporaires) → warning au log, retry au cycle suivant — le temps réel n'est jamais affecté
 - **Cooldown login** (~3-4/min) → le démon ne relogine jamais en boucle
-- **Supervision** : cron15 Jeedom surveille le démon et le relance si nécessaire
+- **Supervision** : crons Jeedom (cron5 = ingestion du backfill, cron15 = watchdog du démon, en plus du contrôle automatique du core toutes les 5 min)
 - **Re-synchronisation** : le démon recharge la config à chaque cycle si vous ajoutez des équipements
 
 ### API utilisée (récapitulatif)
@@ -245,7 +259,7 @@ Le projet suit un **workflow de publication en 2 branches** :
 
 | Branche | Usage | Version actuelle |
 |---|---|---|
-| `stable` | **Production** — validée par Julien après tests réels | **0.1.9** |
+| `stable` | **Production** — validée par Julien après tests réels | **0.1.10** ✅ |
 | `beta` | **Tests** — nouvelles fonctionnalités, corrections | prochaine version (en préparation) |
 
 - Les **nouveautés arrivent toujours sur `beta`** et sont testées en conditions réelles (production réelle de la maison)
@@ -273,7 +287,7 @@ git clone -b beta https://github.com/MrJuju0319/Hoymiles-Cloud.git hoymilescloud
 
 - **Contrôle** (limitation de puissance, arrêt/relance) : non exposé dans cette version — l'API utilisée est en **lecture seule**. Une API de contrôle existe chez Hoymiles mais n'est pas encore intégrée (prévu).
 - **Température des panneaux** : les micros HMS n'ont **aucun capteur de température de surface** — seul le boîtier interne est mesuré (`temp`). Pour la température des panneaux : capteur dédié ou API météo.
-- **Historique cloud long** (15 jours par micro) : nécessite la clé API officielle (wapi.hoymiles.com) — prévu dans une version ultérieure.
+- **Historique** : les 15 derniers jours par micro sont récupérables directement depuis le plugin (page de configuration → **Récupérer l'historique (15 jours)**, via `down_module_day_data`). La clé API officielle (wapi.hoymiles.com) reste réservée aux statistiques longues au-delà de 15 jours.
 - L'app S-Miles et le plugin partagent le même compte : les sessions simultanées sont tolérées.
 
 ---
