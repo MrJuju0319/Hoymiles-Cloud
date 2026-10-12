@@ -240,17 +240,33 @@ class hoymilescloud extends eqLogic
             return;
         }
 
-        // Totaux des jours précédents : MAX() = total du jour, le compteur
-        // today_eq repartant de zéro à minuit.
-        $hist = array();
-        if (is_object($cmdToday)) {
-            $sql = 'SELECT DATE(datetime) AS j, MAX(CAST(value AS DECIMAL(20,4))) AS v FROM history'
-                . ' WHERE cmd_id = ' . intval($cmdToday->getId())
-                . ' AND datetime >= DATE_SUB(CURDATE(), INTERVAL 8 DAY) AND DATE(datetime) < CURDATE()'
-                . ' GROUP BY DATE(datetime) ORDER BY j DESC';
-            foreach ($db->query($sql)->fetchAll(PDO::FETCH_ASSOC) as $r) {
-                $hist[$r['j']] = floatval($r['v']);
+        // Totaux des jours précédents : les compteurs d'énergie PAR PORT (e1,
+        // e2…) sont historisés et reconstitués par le backfill — les compteurs
+        // de la station (today_eq) ne le sont que depuis la mise en service.
+        // MAX() par jour et par port = énergie du jour du port (le compteur
+        // repart de zéro à minuit), sommée sur les ports et les micros.
+        $ids = array();
+        foreach (eqLogic::byType(self::PLUGIN_ID) as $eq) {
+            if (strpos($eq->getLogicalId(), 'micro-') !== 0) {
+                continue;
             }
+            foreach ($eq->getCmd() as $cmd) {
+                if (preg_match('/^e\d+$/', $cmd->getLogicalId())) {
+                    $ids[] = intval($cmd->getId());
+                }
+            }
+        }
+        $hist = array();
+        if ($ids) {
+            $sql = 'SELECT DATE(datetime) AS j, cmd_id, MAX(CAST(value AS DECIMAL(20,4))) AS v FROM history'
+                . ' WHERE cmd_id IN (' . implode(',', $ids) . ')'
+                . ' AND datetime >= DATE_SUB(CURDATE(), INTERVAL 8 DAY) AND DATE(datetime) < CURDATE()'
+                . ' GROUP BY DATE(datetime), cmd_id';
+            foreach ($db->query($sql)->fetchAll(PDO::FETCH_ASSOC) as $r) {
+                // Cumul par jour (plusieurs ports par micro)
+                $hist[$r['j']] = (isset($hist[$r['j']]) ? $hist[$r['j']] : 0) + floatval($r['v']);
+            }
+            krsort($hist);
         }
         $yesterday = $hist ? reset($hist) : null;
         $avg = $hist ? array_sum($hist) / count($hist) : null;
@@ -283,7 +299,9 @@ class hoymilescloud extends eqLogic
             }
         }
 
-        $msg = '☀️ <b>Production solaire du jour : ' . number_format($todayWh / 1000, 2, ',', ' ') . ' kWh</b>';
+        // Message en TEXTE BRUT (message::add échappe le HTML : des balises
+        // <br> s'afficheraient littéralement dans le centre de messages).
+        $msg = '☀️ Production solaire du jour : ' . number_format($todayWh / 1000, 2, ',', ' ') . ' kWh';
         $details = array();
         if ($yesterday !== null && $yesterday > 0) {
             $delta = round(($todayWh - $yesterday) / $yesterday * 100);
@@ -298,11 +316,11 @@ class hoymilescloud extends eqLogic
         if (is_object($cmdSelf) && $cmdSelf->getCache('value', null) !== null) {
             $details[] = 'Autoconso ' . round(floatval($cmdSelf->getCache('value', 0))) . ' %';
         }
-        if ($details) {
-            $msg .= '<br>' . implode(' · ', $details);
-        }
         if ($micros) {
-            $msg .= '<br>' . implode(' · ', $micros);
+            $details[] = implode(' · ', $micros);
+        }
+        if ($details) {
+            $msg .= ' · ' . implode(' · ', $details);
         }
         message::add(self::PLUGIN_ID, $msg);
         log::add(self::PLUGIN_ID, 'info', 'Rapport quotidien envoyé (' . number_format($todayWh / 1000, 2, ',', ' ') . ' kWh)');
