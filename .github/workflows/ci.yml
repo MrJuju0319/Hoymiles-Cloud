@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [beta, stable]
+  pull_request:
+
+jobs:
+  tests:
+    name: Tests unitaires (logique + parseurs protobuf)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Dépendances
+        run: pip install -r resources/requirements.txt pytest
+      - name: Tests
+        run: python -m pytest tests -q
+
+  syntaxe:
+    name: Syntaxe PHP
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+      - name: php -l
+        run: |
+          set -e
+          for f in $(find . -name '*.php' -not -path './node_modules/*'); do
+            php -l "$f"
+          done
