@@ -15,6 +15,7 @@
 | 🔌 **Électrique** | **Tensions PV par port** (V), **courants PV** (A), **tension réseau** (V), **fréquence** (Hz), **température du micro** (°C) |
 | 🚨 **Alertes** | État connecté + alerte anomalie par micro |
 | 🤖 **Automatique** | Synchronisation cloud en 1 clic (station + tous les micros), démon auto-surveillé |
+| 🏠 **Multi-installations** | **Toutes les stations du compte** (plusieurs maisons, compte installateur), avec un réglage de protection de l'API |
 | 📅 **Rapport quotidien** | Message Jeedom à 21 h : production du jour, comparaison veille, pic de puissance, détail par micro |
 | 🕘 **Historique 15 jours** | Import en un clic des 15 derniers jours de mesures depuis le cloud |
 | 🧠 **Push intelligent** | Seuil de changement configurable : l'historique Jeedom n'est pas noyé |
@@ -75,6 +76,7 @@ git clone -b stable https://github.com/MrJuju0319/Hoymiles-Cloud.git hoymilesclo
 | **Données électriques** | Intervalle (s) des tensions/courants/fréquence/température — `300` par défaut (minimum 300) |
 | **Niveau de log du démon** | Normal / Détaillé (diagnostic) / Réduit (erreurs seulement) |
 | **Rapport quotidien** | Message Jeedom à 21 h (production du jour, comparaison veille, pic, détail par micro) — `Oui` par défaut |
+| **Stations en temps réel (burst)** | Nombre de stations suivies en temps réel (3 par défaut) — au-delà, les stations restent suivies par les énergies (60 s) et les données électriques (5 min) : utile sur un compte multi-sites ou installateur |
 | **Maintenance → Réparer l'historisation** | Coche la case *Historiser* des commandes numériques (utile si les courbes sont vides) |
 | **Maintenance → Récupérer l'historique** | Importe les 15 derniers jours de mesures par micro depuis le cloud (exécution en arrière-plan, ingestion automatique) |
 
@@ -92,7 +94,7 @@ graph LR
 2. Cliquer **Tester la connexion** → toast vert *« Connecté (v3/home). N station(s) trouvée(s) : … »*
 3. Cliquer **Synchroniser** → création automatique :
    - la **Station** (nom = nom de la station dans S-Miles, ex. « Mon domicile »)
-   - un **équipement par micro-onduleur** (ex. « HMS-1000-2WB (1610A38B350B) »)
+   - un **équipement par micro-onduleur** (ex. « HMS-1000-2WB (SN1234567890) »)
 4. **Démarrer le démon** → les valeurs sont poussées en continu
 
 > 🎨 **Personnalisation libre** : renommez équipements et commandes comme vous voulez (« Balcon Sud », « Garage »…) — **la synchronisation ne re-renomme jamais** ce que vous avez personnalisé (les noms cloud ne sont appliqués qu'à la création).
@@ -130,7 +132,8 @@ graph LR
 | `uac` | Tension réseau | V | 5 min | Tension AC |
 | `freq` | Fréquence réseau | Hz | 5 min | Fréquence AC |
 | `temp` | Température micro | °C | 5 min | Température interne du boîtier |
-| `status` | **Statut** | texte | 60 s | **`Normal` / `Warning` / `Alerte`** — santé du micro (déclenche les scénarios) |
+| `status` | **Statut** | texte | 60 s | **`Normal` / `Warning` / `Alerte`** (traduit selon la langue de Jeedom : `Alert` en anglais) — santé du micro |
+| `status_code` | **Statut (code)** | numérique | 60 s | **0** normal · **1** avertissement · **2** alerte — à utiliser dans les scénarios : insensible à la langue et à un futur changement de libellé |
 | `alarm_msg` | **Message d'erreur** | texte | 60 s | Détail de l'alarme (« Surtension réseau », « Sur-température »…) — `OK` si Normal |
 | `warn` | Alerte | binaire | 60 s | 1 si le micro signale une anomalie |
 | `connect` | Connecté | binaire | burst | 1 si le micro répond au burst |

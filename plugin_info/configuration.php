@@ -79,6 +79,13 @@
             <span class="help-block">{{Production du jour, comparaison veille, pic et détail par micro.}}</span>
         </div>
     </div>
+    <div class="form-group">
+        <label class="col-sm-3 control-label">{{Stations en temps réel (burst)}}</label>
+        <div class="col-sm-3">
+            <input class="configKey form-control" data-l1key="burst_max_stations" placeholder="3" />
+            <span class="help-block">{{Nombre de stations suivies en temps réel. Au-delà (compte multi-sites ou installateur), les stations restent suivies : énergies toutes les 60 s et données électriques toutes les 5 min.}}</span>
+        </div>
+    </div>
 </fieldset>
 
 <fieldset>

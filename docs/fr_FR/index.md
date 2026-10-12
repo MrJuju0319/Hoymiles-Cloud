@@ -66,7 +66,7 @@ Plugin Jeedom de supervision des **micro-onduleurs Hoymiles** (HMS-xxx-WB/T) via
 | `daemon` | Démon OK | binaire | Heartbeat du démon (mis à jour toutes les 60 s) — pour scénario d'alerte si plus de mise à jour |
 | `last_data_time` | Dernière donnée | date | Horodatage de la dernière remontée de données |
 
-### Micro-onduleur (ex. « HMS-1000-2WB (1610A38B34D5) »)
+### Micro-onduleur (ex. « HMS-1000-2WB (SN1234567890) »)
 
 | LogicalId | Nom | Unité | Description |
 |---|---|---|---|
@@ -79,6 +79,7 @@ Plugin Jeedom de supervision des **micro-onduleurs Hoymiles** (HMS-xxx-WB/T) via
 | `freq` | Fréquence réseau | Hz | Fréquence AC (bucket 5 min) |
 | `temp` | Température micro | °C | Température interne du boîtier (bucket 5 min) |
 | `warn` | Alerte | binaire | 1 si le micro signale une anomalie (warn_data.warn) |
+| `status_code` | Statut (code) | numérique | 0 normal · 1 avertissement · 2 alerte (indépendant de la langue) |
 | `soft_ver` | Version firmware | texte | Version du firmware (info uniquement) |
 
 > Les commandes peuvent être renommées, reclassées dans vos objets, et utilisées dans les **virtuels**, **scénarios**, **widgets** et **designs** comme n'importe quelle commande Jeedom.

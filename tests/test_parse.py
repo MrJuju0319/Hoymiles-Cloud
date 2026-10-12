@@ -12,12 +12,12 @@ import pbgen
 from backfill import parse_day_series
 from hoymiles_api import parse_day_data
 
-SID = 14862230
+SID = 1
 DAY = "2026-10-12"
 TIMES = ["17:05", "17:10", "17:15"]
 
 MICRO_2P = pbgen.micro_msg(
-    micro_id=34457860,
+    micro_id=1,
     times=TIMES,
     ports={
         1: [pbgen.point(230.1, 5.20, 1000.0, 700.0),
@@ -34,7 +34,7 @@ MICRO_2P = pbgen.micro_msg(
 )
 
 MICRO_4P = pbgen.micro_msg(
-    micro_id=34469900,
+    micro_id=2,
     times=TIMES,
     ports={
         3: [pbgen.point(220.0, 4.0, 300.0, 100.0),
@@ -61,7 +61,7 @@ def test_parse_day_data_entete():
 
 def test_parse_day_data_dernier_bucket_ac_par_micro():
     data = parse_day_data(BLOB)
-    m = data["micros"][34457860]
+    m = data["micros"][1]
     assert m["freq"] == pytest.approx(50.02, abs=0.01)
     assert m["temp"] == pytest.approx(42.0, abs=0.01)
     assert m["uac"] == pytest.approx(231.5, abs=0.01)
@@ -70,7 +70,7 @@ def test_parse_day_data_dernier_bucket_ac_par_micro():
 
 def test_parse_day_data_ports_du_dernier_bucket():
     data = parse_day_data(BLOB)
-    m = data["micros"][34457860]
+    m = data["micros"][1]
     assert m["ports"][1]["up"] == pytest.approx(230.3, abs=0.01)
     assert m["ports"][1]["ip"] == pytest.approx(5.40, abs=0.01)
     assert m["ports"][1]["p"] == pytest.approx(1020.0, abs=0.1)
@@ -81,20 +81,20 @@ def test_parse_day_data_ports_du_dernier_bucket():
 def test_parse_day_data_alarmes_deduplicuees():
     """Champ 8 = série int16 par bucket ; 0 = pas d'alarme."""
     data = parse_day_data(BLOB)
-    assert data["micros"][34457860]["alarm_codes"] == [6]
-    assert data["micros"][34469900]["alarm_codes"] == []
+    assert data["micros"][1]["alarm_codes"] == [6]
+    assert data["micros"][2]["alarm_codes"] == []
 
 
 def test_parse_day_data_micro_4_ports_non_tronque():
     """Régression : le parseur du démon ne doit pas limiter aux ports 1-2."""
     data = parse_day_data(BLOB)
-    assert sorted(data["micros"][34469900]["ports"].keys()) == [3, 4]
+    assert sorted(data["micros"][2]["ports"].keys()) == [3, 4]
 
 
 # ---------- parse_day_series (backfill : séries complètes) ----------
 def test_parse_day_series_series_completes():
     series = parse_day_series(BLOB)
-    m = series[34457860]
+    m = series[1]
     assert len(m["times"]) == 3
     assert len(m["ports"][1]["up"]) == 3
     assert m["ports"][1]["watt"] == pytest.approx([1000.0, 1010.0, 1020.0], abs=0.1)
@@ -105,7 +105,7 @@ def test_parse_day_series_series_completes():
 
 def test_parse_day_series_quatre_ports():
     series = parse_day_series(BLOB)
-    assert sorted(series[34469900]["ports"].keys()) == [3, 4]
+    assert sorted(series[2]["ports"].keys()) == [3, 4]
 
 
 def test_parse_day_series_blob_vide():

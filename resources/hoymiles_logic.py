@@ -3,8 +3,11 @@
 
 Ces fonctions ont été extraites de hoymiles_daemon.py pour être couvertes par
 la suite de tests (tests/test_logic.py) : ce sont elles qui décident du
-comportement « nuit » et des statuts de santé, deux domaines où une régression
-silencieuse a déjà eu lieu (v0.1.8).
+comportement « nuit », des statuts de santé et de la cadence de collecte —
+trois domaines où une régression silencieuse a déjà eu lieu (v0.1.8).
+
+Aucune hypothèse sur l'installation : identifiants d'équipement, nombre de
+stations et de micros sont fournis par l'appelant.
 """
 from hoymiles_api import ALARM_MESSAGES
 
@@ -22,6 +25,41 @@ ELECTRICAL_CMDS = {
 # Délai (s) après lequel un micro hors ligne voit ses valeurs électriques forcées à 0
 OFF_LINE_DELAY = 300
 
+# Statuts de santé : libellés localisés + code numérique.
+# Le CODE est ce que les scénarios devraient utiliser : il ne dépend ni de la
+# langue de l'utilisateur, ni d'une future reformulation du libellé.
+STATUS_LABELS = {
+    "fr": {"normal": "Normal", "warning": "Warning", "alert": "Alerte"},
+    "en": {"normal": "Normal", "warning": "Warning", "alert": "Alert"},
+}
+STATUS_CODES = {"normal": 0, "warning": 1, "alert": 2}
+
+# Libellés d'alarme en anglais (la table française, alignée sur l'enum
+# AlarmReason du protocole DTU, est dans hoymiles_api.ALARM_MESSAGES)
+ALARM_MESSAGES_EN = {
+    1: "Other anomaly",
+    2: "DC over-voltage (panel)",
+    3: "DC under-voltage (panel)",
+    4: "Grid over-voltage",
+    5: "Grid under-voltage",
+    6: "Over-temperature",
+    7: "DC over-current (panel)",
+    8: "DC under-current (panel)",
+    9: "AC over-current (grid)",
+    10: "AC under-current (grid)",
+    11: "Insulation fault",
+    12: "Residual current fault",
+    13: "DC injection",
+    14: "Relay fault",
+    15: "Grid frequency too high",
+    16: "Grid frequency too low",
+}
+
+
+def norm_lang(lang):
+    """'fr_FR', 'fr', 'en_US'… → 'fr' ou 'en' (défaut : fr)."""
+    return "en" if str(lang or "").lower().startswith("en") else "fr"
+
 
 def offline_zero(eq_logical, cmd_logical, offline_since, micros, now, delay=OFF_LINE_DELAY):
     """La valeur doit-elle être forcée à 0 ?
@@ -32,8 +70,10 @@ def offline_zero(eq_logical, cmd_logical, offline_since, micros, now, delay=OFF_
     déclenche donc JAMAIS de faux zéro.
 
     Station : seule `real_power` peut être forcée à 0, et uniquement si TOUS les
-    micros sont hors ligne depuis `delay` (sinon on masquerait la production des
-    micros sains). Les compteurs d'énergie, %, CO2… ne sont jamais touchés.
+    micros DE CETTE STATION sont hors ligne depuis `delay` (on ne masque jamais
+    la production des micros sains, et sur un compte multi-sites les micros
+    d'une autre installation n'entrent pas en compte). Les compteurs d'énergie,
+    %, CO2… ne sont jamais touchés.
     """
     if eq_logical.startswith("station-"):
         if cmd_logical == "real_power" and micros:
@@ -49,32 +89,49 @@ def offline_zero(eq_logical, cmd_logical, offline_since, micros, now, delay=OFF_
     return False
 
 
-def alarm_status(warn, connect, codes, messages=None):
+def alarm_status(warn, connect, codes, lang="fr", messages=None):
     """Traduit l'état brut S-Miles en statut lisible pour Jeedom.
 
-    - connect=False              → « Alerte » (perte de liaison : plus aucune
+    - connect=False              → alerte (perte de liaison : plus aucune
                                     production remontée, c'est le plus grave)
-    - warn=True / codes non vide → « Warning » (le micro répond mais signale une
-                                    anomalie : sur-tension, sur-température…)
-    - sinon                      → « Normal »
+    - warn=True / codes non vide → avertissement (le micro répond mais signale
+                                    une anomalie : sur-tension, sur-température…)
+    - sinon                      → normal
 
     Le message est dérivé du 1er code d'alarme (protobuf day_data, enum
-    AlarmReason) ; à défaut du booléen cloud, message générique.
+    AlarmReason) ; à défaut du booléen cloud, message générique. `lang` choisit
+    la table de libellés (fr par défaut, en si l'interface Jeedom est anglaise).
     """
-    messages = ALARM_MESSAGES if messages is None else messages
+    lang = norm_lang(lang)
+    labels = STATUS_LABELS[lang]
+    table = messages if messages is not None else (ALARM_MESSAGES_EN if lang == "en" else ALARM_MESSAGES)
     if not connect:
-        return "Alerte", "Micro-onduleur hors ligne"
+        msg = "Micro-inverter offline" if lang == "en" else "Micro-onduleur hors ligne"
+        return labels["alert"], msg
     if warn or codes:
         code = codes[0] if codes else None
         if code is not None:
-            msg = messages.get(code, f"Alarme (code {code})")
+            msg = table.get(code, f"Alarm (code {code})" if lang == "en" else f"Alarme (code {code})")
         else:
-            msg = "Anomalie détectée"
-        return "Warning", msg
+            msg = "Anomaly detected" if lang == "en" else "Anomalie détectée"
+        return labels["warning"], msg
     # Sentinelle « OK » et non chaîne vide : le core Jeedom n'émet pas
     # d'événement pour une valeur vide (core/api/jeeApi.php : init('value') != '')
     # → les scénarios ne se déclencheraient jamais sur le retour à la normale.
-    return "Normal", "OK"
+    return labels["normal"], "OK"
+
+
+def status_code(status):
+    """Code numérique du statut (0 normal, 1 avertissement, 2 alerte).
+
+    Poussé en plus du libellé : un scénario bâti sur ce code fonctionne quelle
+    que soit la langue de l'utilisateur (le libellé, lui, est traduit)."""
+    s = str(status or "").strip().lower()
+    if s in ("alerte", "alert"):
+        return STATUS_CODES["alert"]
+    if s == "warning":
+        return STATUS_CODES["warning"]
+    return STATUS_CODES["normal"]
 
 
 def entry_ports(entry):

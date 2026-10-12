@@ -63,7 +63,7 @@ Jeedom plugin to monitor **Hoymiles microinverters** (HMS-xxx-WB/T) through the 
 | `online` | Online | binary | 1 if the station is online |
 | `last_data_time` | Last data | date | Timestamp of the latest data report |
 
-### Inverter (e.g. "HMS-1000-2WB (1610A38B34D5)")
+### Inverter (e.g. "HMS-1000-2WB (SN1234567890)")
 
 | LogicalId | Name | Unit | Description |
 |---|---|---|---|

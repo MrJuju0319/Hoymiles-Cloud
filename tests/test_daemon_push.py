@@ -59,3 +59,43 @@ def test_seuil_transmis_au_pusher():
     d.push("micro-A", "pac", 300.0, 5, True)
     eq, cmd, value, threshold, force = d.q.get_nowait()
     assert (eq, cmd, value, threshold, force) == ("micro-A", "pac", 300.0, 5, True)
+
+
+# ---------- Multi-installations (compte à plusieurs stations) ----------
+def test_station_micros_cible_la_bonne_station():
+    d = make_daemon()
+    d.stations = [{"sid": 1, "micros": ["A"]}, {"sid": 22, "micros": ["B", "C"]}]
+    assert d.station_micros("station-1") == ["A"]
+    assert d.station_micros("station-22") == ["B", "C"]
+    assert d.station_micros("station-3") == []
+
+
+def test_zeroing_station_ne_depend_que_de_ses_micros():
+    d = make_daemon()
+    d.mapping = {"station-1": {"cmds": {"real_power": 1}},
+                 "station-2": {"cmds": {"real_power": 2}}}
+    d.stations = [{"sid": 1, "micros": ["A"]}, {"sid": 2, "micros": ["B"]}]
+    d.offline_since = {"A": time.time() - 400}
+    d.push("station-1", "real_power", 500.0)
+    assert d.q.get_nowait()[2] == 0          # station 1 : son micro est hors ligne
+    d.push("station-2", "real_power", 500.0)
+    assert d.q.get_nowait()[2] == 500.0      # station 2 : son micro produit
+
+
+def test_chemins_runtime_issus_de_la_config():
+    """Le dossier temporaire est fourni par Jeedom (config['tmp_dir']) : aucun
+    chemin /tmp/jeedom/... en dur (certains hôtes le déplacent)."""
+    d = make_daemon()
+    d.tmp_dir = "/var/lib/jeedom-tmp/hoymilescloud"
+    assert d.pid_file == "/var/lib/jeedom-tmp/hoymilescloud/daemon.pid"
+    assert d.status_file == "/var/lib/jeedom-tmp/hoymilescloud/status.json"
+
+
+def test_langue_lue_depuis_la_config():
+    from hoymiles_logic import norm_lang
+    assert norm_lang("en_US") == "en"      # installation anglophone
+    assert norm_lang("fr_FR") == "fr"
+    d = make_daemon()
+    d.language = "en"
+    status, msg = d._alarm_status(warn=False, connect=False, codes=[])
+    assert status == "Alert" and "offline" in msg

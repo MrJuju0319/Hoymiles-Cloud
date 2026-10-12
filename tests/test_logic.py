@@ -3,14 +3,17 @@
 Ces règles ont déjà provoqué une régression silencieuse en production (valeurs
 figées d'un micro hors ligne affichées comme réelles, faux « hors ligne » la
 nuit) : elles sont désormais couvertes, sans réseau ni Jeedom.
+
+Aucune donnée réelle : identifiants d'équipement fictifs.
 """
 import pytest
 
-from hoymiles_logic import (ELECTRICAL_CMDS, OFF_LINE_DELAY, alarm_status,
-                            burst_delay_ms, entry_ports, offline_zero)
+from hoymiles_logic import (ALARM_MESSAGES_EN, ELECTRICAL_CMDS, OFF_LINE_DELAY,
+                            STATUS_CODES, alarm_status, burst_delay_ms, entry_ports,
+                            norm_lang, offline_zero, status_code)
 
 NOW = 1_800_000_000.0
-MICROS = ["1610A38B34D5", "1610A38B350B"]
+MICROS = ["SN0000000001", "SN0000000002"]
 
 
 def offline(delay, sn=None):
@@ -48,19 +51,29 @@ def test_compteurs_energie_jamais_zeroes():
 
 def test_station_real_power_zeroe_si_tous_les_micros_sont_hors_ligne():
     state = offline(OFF_LINE_DELAY + 10)
-    assert offline_zero("station-14862230", "real_power", state, MICROS, NOW) is True
+    assert offline_zero("station-1", "real_power", state, MICROS, NOW) is True
 
 
 def test_station_real_power_conservee_si_un_micro_produit():
     """On ne masque jamais la production des micros sains."""
     state = offline(OFF_LINE_DELAY + 10, sn=MICROS[0])
-    assert offline_zero("station-14862230", "real_power", state, MICROS, NOW) is False
+    assert offline_zero("station-1", "real_power", state, MICROS, NOW) is False
+
+
+def test_multi_sites_les_micros_d_une_autre_station_n_influent_pas():
+    """Sur un compte à plusieurs installations, le zeroing d'une station ne doit
+    dépendre que de SES micros (l'appelant passe la liste de la station)."""
+    state = {MICROS[0]: NOW - OFF_LINE_DELAY - 10}
+    # Station 2 (micro en ligne) → jamais zéroée
+    assert offline_zero("station-2", "real_power", state, ["SN0000000002"], NOW) is False
+    # Station 1 (micro unique hors ligne) → zéroée
+    assert offline_zero("station-1", "real_power", state, [MICROS[0]], NOW) is True
 
 
 def test_station_energies_jamais_zeroees():
     state = offline(OFF_LINE_DELAY + 600)
     for cmd in ("today_eq", "month_eq", "year_eq", "total_eq", "self_rate", "co2"):
-        assert offline_zero("station-14862230", cmd, state, MICROS, NOW) is False
+        assert offline_zero("station-1", cmd, state, MICROS, NOW) is False
 
 
 def test_commande_inconnue_ne_zero_pas():
@@ -101,6 +114,38 @@ def test_statut_normal_avec_sentinelle_ok():
 def test_code_alarme_inconnu_reste_lisible():
     status, msg = alarm_status(True, True, [999])
     assert status == "Warning" and "999" in msg
+
+
+# ---------- Statuts localisés (installation non francophone) ----------
+def test_statuts_en_anglais():
+    assert alarm_status(False, False, [], lang="en_US")[0] == "Alert"
+    assert alarm_status(False, True, [], lang="en_US") == ("Normal", "OK")
+    status, msg = alarm_status(True, True, [6], lang="en")
+    assert status == "Warning" and "temperature" in msg.lower()
+
+
+def test_langue_normalisee():
+    assert norm_lang("en_US") == "en"
+    assert norm_lang("EN") == "en"
+    assert norm_lang("fr_FR") == "fr"
+    assert norm_lang(None) == "fr"
+    assert norm_lang("de_DE") == "fr"  # langue non gérée → repli français
+
+
+def test_tables_alarmes_completes():
+    """Une entrée pour chacun des 16 codes du protocole, dans les deux langues."""
+    assert sorted(ALARM_MESSAGES_EN.keys()) == list(range(1, 17))
+
+
+def test_codes_de_statut_stables():
+    """Le code numérique est l'interface stable pour les scénarios : il ne doit
+    pas dépendre de la langue."""
+    assert status_code("Alerte") == STATUS_CODES["alert"]
+    assert status_code("Alert") == STATUS_CODES["alert"]
+    assert status_code("Warning") == STATUS_CODES["warning"]
+    assert status_code("Normal") == STATUS_CODES["normal"]
+    assert status_code("") == STATUS_CODES["normal"]
+    assert status_code(None) == STATUS_CODES["normal"]
 
 
 # ---------- Ports dynamiques ----------
