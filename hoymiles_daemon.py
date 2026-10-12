@@ -483,7 +483,8 @@ class HoymilesDaemon:
                 # pour le statut "Warning"/"Alerte" et le message d'erreur.
                 self.alarm_codes[sn] = entry.get("alarm_codes") or []
             self._set_status(day_ok=True, error=None)
-            log(f"Day data OK : {len(data.get('micros', {}))} micro(s) — uac/temp/up/ip mis à jour")
+            log(f"Day data OK : {len(data.get('micros', {}))} micro(s) — uac/temp/up/ip mis à jour",
+                logging.DEBUG)
         except Exception as e:
             log(f"Day data échoué : {e}")
             self._set_status(day_ok=False, error=str(e)[:120])
